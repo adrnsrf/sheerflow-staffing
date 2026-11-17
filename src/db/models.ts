@@ -13,7 +13,7 @@ import type { PGlite } from "@electric-sql/pglite";
 
 const DIR = path.join(process.cwd(), "models");
 // Build order: a view can only use views that come before it.
-const MARTS = ["signals_fact", "company_heat", "person_heat"];
+const MARTS = ["signals_fact", "company_heat", "person_heat", "outreach_touches", "person_outreach"];
 
 /** How much each kind of signal counts when the app is first set up. Edit them in the app afterwards. */
 const SIGNAL_TYPES: [string, "company" | "person", string, number, number, string][] = [

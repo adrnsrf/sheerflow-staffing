@@ -3,7 +3,9 @@ import { addToCallListAction } from "@/app/actions";
 import { AskClaude, queuedJobKeys } from "@/components/ask-claude";
 import { LinkedInActions } from "@/components/linkedin";
 import { Act, Badge, Empty, PageHeader, type Tone } from "@/components/ui";
+import { LastContact } from "@/components/history";
 import { jobKey } from "@/core";
+import { lastContacts, pace } from "@/core/history";
 import { getNextActions, type ActionKind, type NextAction } from "@/core/decisions";
 
 const KIND: Record<ActionKind, [string, Tone]> = {
@@ -29,7 +31,7 @@ export default async function Actions({ searchParams }: { searchParams: Promise<
   const sp = await searchParams;
   const wanted = sp.kind;
   const kind = Object.keys(KIND).find((k) => k === wanted) as ActionKind | undefined;
-  const [everything, queued] = await Promise.all([getNextActions({ limit: 400 }), queuedJobKeys()]);
+  const [everything, queued, worked, today] = await Promise.all([getNextActions({ limit: 400 }), queuedJobKeys(), lastContacts(), pace()]);
   // Anything already handed to Claude leaves the to-do list and waits in its own group.
   const isWaiting = (x: NextAction) => !!JOB[x.kind] && queued.has(jobKey(jobFor(x).kind, jobFor(x).payload));
   const all = everything.filter((x) => !isWaiting(x)), waiting = everything.filter(isWaiting);
@@ -40,6 +42,14 @@ export default async function Actions({ searchParams }: { searchParams: Promise<
   return (
     <>
       <PageHeader title="To do: business development" sub="The strongest moves first: who to follow up with, connect with or research, and why. Work from the top; you do not need to clear the list." />
+      <div className="card mb-4 flex flex-wrap items-center gap-x-6 gap-y-1 px-4 py-2.5 text-sm">
+        <span className="font-medium">Today so far</span>
+        <span>LinkedIn requests <span className="font-semibold tabular-nums">{today.connects_today}</span><span className="muted"> of {today.plan.dailyConnects}</span></span>
+        <span>Calls <span className="font-semibold tabular-nums">{today.calls_today}</span><span className="muted"> of {today.plan.dailyCalls}</span></span>
+        <span>Emails and texts <span className="font-semibold tabular-nums">{today.messages_today}</span><span className="muted"> of {today.plan.dailyFollowUps}</span></span>
+        <span className={today.connects_week >= today.plan.weeklyLinkedInLimit ? "font-medium text-rose-700" : "muted"}>LinkedIn this week {today.connects_week} of {today.plan.weeklyLinkedInLimit}{today.connects_week >= today.plan.weeklyLinkedInLimit && ": stop for the week"}</span>
+        <Link href="/bd/progress" className="ml-auto text-xs font-medium text-brand hover:underline">Who is in progress</Link>
+      </div>
       <div className="mb-4 flex flex-wrap items-center gap-1">
         <Link href="/bd/actions" className={`rounded-md px-3 py-1.5 text-sm ${!kind ? "bg-ink font-medium text-white" : "text-stone-600 hover:bg-stone-200"}`}>All ({all.length})</Link>
         {(Object.keys(KIND) as ActionKind[]).filter((k) => count(k) > 0).map((k) => (
@@ -56,7 +66,7 @@ export default async function Actions({ searchParams }: { searchParams: Promise<
                   <Badge tone={a.when === "Today" ? "amber" : "gray"}>{a.when}</Badge>
                   <span className="muted text-xs tabular-nums" title="Higher means a stronger case for doing this now">Score {a.score}</span>
                 </div>
-                <div className="font-medium">{a.headline}</div>
+                <div className="flex flex-wrap items-center gap-2 font-medium">{a.headline}{a.person && <LastContact c={worked.get(a.person.id)} />}</div>
                 <div className="muted text-sm">{a.person && <>{a.person.title} · </>}<Link href={`/bd/accounts/${a.company.id}`} className="text-brand hover:underline">{a.company.name}</Link></div>
                 <ul className="mt-1.5 space-y-0.5 text-sm">{a.why.map((w, i) => <li key={i} className="flex gap-2"><span className="text-brand">•</span><span>{w}</span></li>)}</ul>
               </div>

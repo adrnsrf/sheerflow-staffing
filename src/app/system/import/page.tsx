@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { importAction } from "@/app/actions";
+import { importAction, restoreBackupAction } from "@/app/actions";
 import { PageHeader } from "@/components/ui";
 import { IMPORTS_DIR } from "@/db/client";
 
@@ -16,7 +16,7 @@ function fileInfo(kind: string) {
   try { return { rows: (JSON.parse(fs.readFileSync(file, "utf8")) as unknown[]).length, modified: fs.statSync(file).mtime }; } catch { return { rows: -1, modified: new Date() }; }
 }
 
-export default async function Import({ searchParams }: { searchParams: Promise<{ done?: string; result?: string; error?: string }> }) {
+export default async function Import({ searchParams }: { searchParams: Promise<{ done?: string; result?: string; error?: string; restored?: string }> }) {
   const q = await searchParams;
   return (
     <>
@@ -50,6 +50,19 @@ export default async function Import({ searchParams }: { searchParams: Promise<{
           );
         })}
       </div>
+      {q.restored && <div className="mt-4 rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-900">Backup restored: {Number(q.restored).toLocaleString()} rows put back.</div>}
+      <section className="card mt-6 p-4 text-sm">
+        <h2 className="font-semibold">Backup</h2>
+        <p className="muted mt-0.5 max-w-3xl text-xs">One file holding everything in the app. Download it to keep a copy or to move your work to another computer. Restoring replaces everything here with what is in the file.</p>
+        <div className="mt-3 flex flex-wrap items-center gap-4">
+          <a href="/api/backup" className="btn btn-primary">Download a backup</a>
+          <form action={restoreBackupAction} className="flex flex-wrap items-center gap-2">
+            <input type="file" name="file" accept=".json" required className="w-56 text-xs" />
+            <label className="flex items-center gap-1.5 text-xs"><input type="checkbox" name="confirm" className="accent-teal-700" /> Replace everything here</label>
+            <button className="btn btn-danger">Restore from file</button>
+          </form>
+        </div>
+      </section>
       <p className="muted mt-6 max-w-3xl text-xs leading-relaxed">
         To refresh from a sheet: in Google Sheets choose File, Download, Comma-separated values, then upload that file here. Running an import twice is safe. Imported contact data stays on this computer.
       </p>

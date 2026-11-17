@@ -1,12 +1,14 @@
 import Link from "next/link";
 import { clearSamplesAction } from "@/app/actions";
 import { Act, Badge, Empty, PageHeader } from "@/components/ui";
+import { LastContact } from "@/components/history";
 import { listCandidates } from "@/core/candidates";
+import { lastContacts } from "@/core/history";
 import { searchCandidates } from "@/core/matching";
 
 export default async function Candidates({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
   const q = (await searchParams).q?.trim();
-  const all = await listCandidates();
+  const [all, worked] = await Promise.all([listCandidates(), lastContacts()]);
   const hits = q ? await searchCandidates(q, 30) : null;
   const byId = new Map(all.map((c) => [c.person.id, c]));
   const rows = hits ? hits.map((h) => ({ ...byId.get(h.personId)!, hit: h })).filter((r) => r.person) : all.map((c) => ({ ...c, hit: null }));
@@ -31,7 +33,7 @@ export default async function Candidates({ searchParams }: { searchParams: Promi
                 return (
                   <tr key={person.id} className="hover:bg-stone-50">
                     {hit && <td className="tabular-nums"><span className="font-semibold">{hit.similarity.toFixed(2)}</span>{hit.toolHits.length > 0 && <div className="muted text-xs">{hit.toolHits.join(", ")}</div>}</td>}
-                    <td><Link href={`/sourcing/candidates/${person.id}`} className="font-medium text-brand hover:underline">{person.name}</Link>{cp.isSample && <> <Badge>Sample</Badge></>}<div className="muted max-w-64 text-xs">{p.headline}{p.totalYears ? ` · ${p.totalYears} yrs` : ""}</div>{hit && <div className="mt-1 max-w-md text-xs text-stone-600"><span className="font-medium">{hit.matchedOn}:</span> {hit.snippet}{hit.snippet.length >= 220 && "…"}</div>}</td>
+                    <td><Link href={`/sourcing/candidates/${person.id}`} className="font-medium text-brand hover:underline">{person.name}</Link>{cp.isSample && <> <Badge>Sample</Badge></>} <LastContact c={worked.get(person.id)} /><div className="muted max-w-64 text-xs">{p.headline}{p.totalYears ? ` · ${p.totalYears} yrs` : ""}</div>{hit && <div className="mt-1 max-w-md text-xs text-stone-600"><span className="font-medium">{hit.matchedOn}:</span> {hit.snippet}{hit.snippet.length >= 220 && "…"}</div>}</td>
                     <td className="max-w-72 text-xs">{[...p.skills].sort((a, b) => b.years - a.years).slice(0, 5).map((sk) => `${sk.name} ${sk.years}`).join(" · ")}</td>
                     <td className="text-xs">{[p.location.city, p.location.state].filter(Boolean).join(", ")}<div className="muted">{p.location.workplace ?? "Preference unknown"}</div></td>
                     <td className="text-xs tabular-nums">{p.compensation.targetBase ? <>${Math.round(p.compensation.targetBase / 1000)}k{p.compensation.minimumBase && p.compensation.minimumBase !== p.compensation.targetBase && <div className="muted">min ${Math.round(p.compensation.minimumBase / 1000)}k</div>}</> : <span className="muted">Unknown</span>}</td>

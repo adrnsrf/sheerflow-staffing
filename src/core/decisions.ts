@@ -130,3 +130,28 @@ export async function getNextActions(opts: { limit?: number; kind?: ActionKind }
   const ranked = actions.filter((a) => !opts.kind || a.kind === opts.kind).sort((a, b) => b.score - a.score);
   return ranked.slice(0, opts.limit ?? 50).map((a) => ({ ...a, score: Math.round(a.score) }));
 }
+
+export type BatchKind = "briefs" | "notes" | "research" | "follow_ups";
+/**
+ * Queue a batch of work for Claude from the top of the to-do list: briefs for the strongest
+ * companies that have none, connection notes for the best people to connect with, numbers for
+ * rows stuck on a bad one, and drafts for follow-ups that are owed.
+ */
+export async function queueBatch(kind: BatchKind, count: number) {
+  const db = await getDb();
+  const { queueJob, queueConnection } = await import("./index");
+  const n = Math.max(1, Math.min(50, count));
+  let queued = 0;
+  if (kind === "briefs") {
+    const heat = (await allCompanyHeat()).filter((h) => h.heat > 0).sort((a, b) => b.priority - a.priority);
+    const without = new Set((await db.select({ id: s.companies.id, brief: s.companies.brief, status: s.companies.status }).from(s.companies)).filter((c) => !c.brief && c.status !== "do_not_contact").map((c) => c.id));
+    const names = new Map((await db.select({ id: s.companies.id, name: s.companies.name }).from(s.companies)).map((c) => [c.id, c.name]));
+    for (const h of heat.filter((x) => without.has(x.company_id)).slice(0, n)) { await queueJob({ kind: "company_brief", title: `Write the brief for ${names.get(h.company_id)}`, payload: { companyId: h.company_id } }); queued++; }
+    return queued;
+  }
+  const actions = await getNextActions({ limit: 400 });
+  if (kind === "notes") for (const a of actions.filter((x) => x.kind === "connect" && x.person && !x.person.connectionNote).slice(0, n)) { await queueConnection(a.person!.id); queued++; }
+  if (kind === "research") for (const a of actions.filter((x) => x.kind === "research").slice(0, n)) { await queueJob({ kind: "phone_research", title: `Ask Claude to research: ${a.person?.name ?? a.company.name}`, payload: { companyId: a.company.id, personId: a.person?.id ?? null } }); queued++; }
+  if (kind === "follow_ups") for (const a of actions.filter((x) => x.kind === "follow_up" && !x.draftReady).slice(0, n)) { await queueJob({ kind: "draft_follow_up", title: `Ask Claude to draft the follow-up: ${a.person?.name ?? a.company.name}`, payload: { companyId: a.company.id, personId: a.person?.id ?? null } }); queued++; }
+  return queued;
+}

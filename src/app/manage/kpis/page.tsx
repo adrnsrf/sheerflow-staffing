@@ -1,3 +1,4 @@
+import { saveTargetsAction } from "@/app/actions";
 import { AskClaude } from "@/components/ask-claude";
 import { KpiTable } from "@/components/kpi-table";
 import { PageHeader, SampleNote } from "@/components/ui";
@@ -16,6 +17,15 @@ export default async function Kpis() {
         </div>
       )}
       <KpiTable weeks={weeks} targets={targets as unknown as Record<string, number>} />
+      <details className="card mt-6 p-4 text-sm">
+        <summary className="cursor-pointer font-semibold">Change the weekly targets</summary>
+        <form action={saveTargetsAction} className="mt-3 flex flex-wrap items-end gap-2 text-xs">
+          {([["dials", "Dials"], ["connects", "Conversations"], ["meetings", "Meetings"], ["agreements", "Agreements"], ["placements", "Placements"], ["costPerMeeting", "Cost per meeting ($)"], ["vendorWeeklyCost", "Vendor cost per week ($)"]] as const).map(([k, name]) => (
+            <label key={k} className="w-32">{name}<input name={k} type="number" min={0} defaultValue={targets?.[k] ?? 0} className="field mt-0.5 w-full text-sm" /></label>
+          ))}
+          <button className="btn btn-primary py-1.5 text-sm">Save targets</button>
+        </form>
+      </details>
       <section className="card mt-6 p-4 text-sm">
         <div className="mb-2 flex items-center justify-between"><h2 className="font-semibold">Weekly review</h2><AskClaude kind="weekly_review" title="Write this week's sales review">Ask Claude to write this week&apos;s</AskClaude></div>
         {review ? <><p className="whitespace-pre-line leading-relaxed">{review.text}</p><p className="muted mt-2 text-xs">Written {new Date(review.savedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</p></> : <p className="muted">No review yet. Claude writes one from these numbers when asked.</p>}

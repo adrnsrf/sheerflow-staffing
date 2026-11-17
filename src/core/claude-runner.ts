@@ -15,8 +15,8 @@ import { desc, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import * as s from "@/db/schema";
 
-const MAX_JOBS = 10;
-const MAX_MINUTES = 20;
+const MAX_JOBS = Number(process.env.CLAUDE_MAX_JOBS) || 15;
+const MAX_MINUTES = 30;
 
 const PROMPT = `You are working the SheerFlow job queue. Use only the sheerflow tools, plus web search where a job calls for research.
 1. Call get_context with slug "ground-rules" and follow it.

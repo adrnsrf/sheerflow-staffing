@@ -1,5 +1,5 @@
 import { headers } from "next/headers";
-import { cancelJobAction, queueJobAction, runClaudeAction } from "@/app/actions";
+import { cancelJobAction, queueBatchAction, queueJobAction, runClaudeAction } from "@/app/actions";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { CopyButton } from "@/components/client";
 import { Act, Badge, PageHeader } from "@/components/ui";
@@ -8,9 +8,15 @@ import { claudeInstalled, currentRun, listRuns } from "@/core/claude-runner";
 import { label, rel } from "@/lib/format";
 
 const QUICK: [string, string][] = [["routine:daily-hiring-posts", "Find today's LinkedIn hiring posts"], ["routine:gmail-job-alerts", "Read new job alert emails"], ["weekly_review", "Write this week's sales review"]];
+const BATCHES: [string, string, string][] = [
+  ["follow_ups", "Follow-up drafts", "For people who spoke with you and have had nothing since"],
+  ["notes", "Connection notes", "For the best people to connect with on LinkedIn"],
+  ["briefs", "Company briefs", "For the strongest companies that have none"],
+  ["research", "Phone research", "For rows stuck on a bad number or wrong contact"],
+];
 const time = (d: Date) => d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 
-export default async function Claude({ searchParams }: { searchParams: Promise<{ error?: string; run?: string }> }) {
+export default async function Claude({ searchParams }: { searchParams: Promise<{ error?: string; run?: string; batch?: string }> }) {
   const [jobs, run, runs, q] = await Promise.all([listJobs(), currentRun(), listRuns(), searchParams]);
   const waiting = jobs.filter((j) => j.status === "queued"), finished = jobs.filter((j) => j.status !== "queued").slice(0, 12);
   const installed = claudeInstalled(), running = run?.status === "running";
@@ -20,6 +26,7 @@ export default async function Claude({ searchParams }: { searchParams: Promise<{
       {running && <AutoRefresh seconds={5} />}
       <PageHeader title="Claude" sub="Buttons across the app hand work to Claude: drafts, research, reading resumes. That work waits here until Claude runs. Press Run to have Claude do it now, on this computer, with your Claude account." />
       {q.error && <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{q.error}</div>}
+      {q.batch && <div className="mb-4 rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-900">{Number(q.batch) > 0 ? `Added ${q.batch} job${q.batch === "1" ? "" : "s"} to the waiting list. Press Run Claude now to start.` : "Nothing to add: those are already done or already waiting."}</div>}
       <section className={`card mb-6 flex flex-wrap items-center justify-between gap-4 p-5 ${running ? "border-violet-300 bg-violet-50" : ""}`}>
         <div className="text-sm">
           {running ? <><div className="text-base font-semibold">Claude is working…</div><div className="muted">Started {time(run!.startedAt)} with {run!.jobsWaiting} job{run!.jobsWaiting === 1 ? "" : "s"} waiting. This page updates by itself; you can keep using the app.</div></>
@@ -41,6 +48,20 @@ export default async function Claude({ searchParams }: { searchParams: Promise<{
               </div>
             ))}
             <div className="flex flex-wrap gap-1.5 border-t border-stone-100 p-3">{QUICK.map(([kind, title]) => <Act key={kind} action={queueJobAction} fields={{ kind, title }}>+ {title}</Act>)}</div>
+          </section>
+          <section className="card p-4 text-sm">
+            <h2 className="font-semibold">Hand Claude a batch</h2>
+            <p className="muted mt-0.5 text-xs">Takes the strongest items from your to-do list and adds them to the waiting list above. Then press Run. Each run works up to 15 jobs; press Run again for the rest.</p>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {BATCHES.map(([kind, name, help]) => (
+                <form key={kind} action={queueBatchAction} className="flex items-center gap-2 rounded-lg border border-stone-200 p-2.5">
+                  <input type="hidden" name="kind" value={kind} />
+                  <span className="min-w-0 flex-1"><span className="block font-medium">{name}</span><span className="muted block text-xs">{help}</span></span>
+                  <select name="count" defaultValue="10" className="field py-1 text-xs">{[5, 10, 15, 25, 50].map((n) => <option key={n} value={n}>{n}</option>)}</select>
+                  <button className="btn">Add</button>
+                </form>
+              ))}
+            </div>
           </section>
           <section className="card">
             <h2 className="border-b border-stone-200 px-4 py-3 text-sm font-semibold">Done recently</h2>

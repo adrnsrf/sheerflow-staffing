@@ -23,18 +23,26 @@ export function MatchScore({ m }: { m: Match }) {
   return (
     <div className="w-24 shrink-0 text-center">
       <div className={`text-2xl font-semibold tabular-nums ${m.score >= 80 ? "text-emerald-700" : m.score >= 65 ? "text-brand" : "text-stone-500"}`}>{m.score}</div>
-      <div className="muted text-[10px] leading-tight">requirements {m.structured}<br />similarity {m.similarity}</div>
+      <div className="muted text-[10px] leading-tight">match</div>
     </div>
   );
 }
 
 export function MatchWhy({ m }: { m: Match }) {
+  const worries = m.parts.slice(1).filter((p) => p.score < 0.4);
   return (
-    <div className="mt-1.5 space-y-0.5 text-xs">
-      {m.missingMust.length > 0 && <div><Badge tone="red">Missing a must-have: {m.missingMust.join(", ")}</Badge></div>}
-      {m.parts.slice(1).map((p) => (
-        <div key={p.label} className="flex gap-2"><span className={`w-3 shrink-0 ${p.score >= 0.7 ? "text-emerald-600" : p.score >= 0.4 ? "text-amber-600" : "text-rose-600"}`}>{p.score >= 0.7 ? "✓" : p.score >= 0.4 ? "~" : "✗"}</span><span className="muted w-24 shrink-0">{p.label}</span><span>{p.note}</span></div>
-      ))}
+    <div className="mt-1.5 text-xs">
+      {m.missingMust.length > 0 && <div className="mb-1"><Badge tone="red">Missing a must-have: {m.missingMust.join(", ")}</Badge></div>}
+      {worries.length > 0 && <div className="text-rose-700">{worries.map((p) => p.note).join(" · ")}</div>}
+      <details>
+        <summary className="cursor-pointer font-medium text-brand">Why this score</summary>
+        <div className="mt-1 space-y-0.5">
+          {m.parts.slice(1).map((p) => (
+            <div key={p.label} className="flex gap-2"><span className={`w-3 shrink-0 ${p.score >= 0.7 ? "text-emerald-600" : p.score >= 0.4 ? "text-amber-600" : "text-rose-600"}`}>{p.score >= 0.7 ? "✓" : p.score >= 0.4 ? "~" : "✗"}</span><span className="muted w-24 shrink-0">{p.label}</span><span>{p.note}</span></div>
+          ))}
+          <div className="muted pt-1">Requirements {m.structured}, similarity to the job description {m.similarity}.</div>
+        </div>
+      </details>
     </div>
   );
 }

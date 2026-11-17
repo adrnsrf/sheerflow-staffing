@@ -9,7 +9,9 @@ import path from "node:path";
 import * as core from "@/core";
 import * as imports from "@/core/imports";
 import * as candidates from "@/core/candidates";
+import { restoreBackup } from "@/core/backup";
 import { startClaudeRun } from "@/core/claude-runner";
+import { queueBatch, type BatchKind } from "@/core/decisions";
 import * as context from "@/core/context";
 import * as outreach from "@/core/outreach";
 import { DIMENSIONS, type Source } from "@/core/candidate-schema";
@@ -257,4 +259,39 @@ export async function saveRequirementsAction(f: FormData) {
   }
   done();
   redirect(`/sourcing/searches/${id}`);
+}
+
+/** Hand Claude a batch from the top of the to-do list. */
+export async function queueBatchAction(f: FormData) {
+  const n = await queueBatch(f.get("kind") as BatchKind, num(f, "count") || 10);
+  done();
+  redirect(`/system/claude?batch=${n}`);
+}
+
+/** Replace everything with an uploaded backup. Needs the confirm box ticked. */
+export async function restoreBackupAction(f: FormData) {
+  let query: string;
+  try {
+    if (f.get("confirm") !== "on") throw new Error("Tick the box to confirm that the backup should replace everything here.");
+    const upload = f.get("file");
+    if (!(upload instanceof File) || upload.size === 0) throw new Error("Choose a backup file first.");
+    const r = await restoreBackup(JSON.parse(await upload.text()));
+    query = new URLSearchParams({ restored: String(r.rows) }).toString();
+  } catch (e) { query = new URLSearchParams({ error: e instanceof Error ? e.message : String(e) }).toString(); }
+  done();
+  redirect(`/system/import?${query}`);
+}
+
+// Leads: clear a screenful at once
+export async function dismissSignalsAction(f: FormData) {
+  for (const id of (str(f, "ids") ?? "").split(",").map(Number).filter(Boolean)) await core.setSignalStatus(id, "dismissed");
+  done();
+}
+
+/** Weekly targets and what the vendor costs, edited on the Numbers screen. */
+export async function saveTargetsAction(f: FormData) {
+  const keys = ["dials", "connects", "meetings", "agreements", "placements", "costPerMeeting", "vendorWeeklyCost"];
+  await core.saveSetting("kpi_targets", Object.fromEntries(keys.map((k) => [k, Math.max(0, num(f, k) || 0)])));
+  done();
+  redirect("/manage/kpis?saved=1");
 }

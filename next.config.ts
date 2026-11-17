@@ -5,7 +5,7 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ["@electric-sql/pglite", "@electric-sql/pglite-pgvector", "@energetic-ai/embeddings", "@energetic-ai/model-embeddings-en", "@energetic-ai/core"],
   devIndicators: false,
   // Room for uploading a LinkedIn Connections export or a sheet saved as CSV.
-  experimental: { serverActions: { bodySizeLimit: "8mb" } },
+  experimental: { serverActions: { bodySizeLimit: "40mb" } },
   turbopack: {
     rules: {
       "*.css": {

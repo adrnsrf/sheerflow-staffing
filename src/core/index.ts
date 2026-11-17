@@ -539,3 +539,7 @@ export async function saveCompanyBrief(companyId: number, brief: string) {
   if (!c) throw new Error(`No company with id ${companyId}`);
   return { company: c.name, saved: true };
 }
+
+export async function saveSetting(key: string, value: unknown) {
+  await (await getDb()).insert(s.settings).values({ key, value }).onConflictDoUpdate({ target: s.settings.key, set: { value } });
+}

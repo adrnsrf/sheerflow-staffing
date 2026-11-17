@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { signalAction } from "@/app/actions";
+import { dismissSignalsAction, signalAction } from "@/app/actions";
 import { Act, Badge, Empty, PageHeader, type Tone } from "@/components/ui";
 import { listSignals } from "@/core";
 import { allCompanyHeat } from "@/core/signals";
@@ -60,6 +60,7 @@ export default async function Signals({ searchParams }: { searchParams: Promise<
       )}
       <div className="muted mt-3 flex items-center gap-3 text-xs">
         <span>Showing {rows.length} of {all.length}.</span>
+        {status === "new" && rows.length > 0 && <Act action={dismissSignalsAction} fields={{ ids: rows.map((r) => r.signal.id).join(",") }} className="btn btn-danger" title="Hides every lead shown above. Promote or Keep the good ones first.">Dismiss these {rows.length}</Act>}
         {all.length > show && <Link href={`/bd/signals?status=${status}&n=${show + PAGE}`} className="btn">Show {Math.min(PAGE, all.length - show)} more</Link>}
       </div>
     </>

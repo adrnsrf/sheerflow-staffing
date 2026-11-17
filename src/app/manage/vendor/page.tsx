@@ -14,7 +14,7 @@ export default async function Vendor() {
       <PageHeader title="Vendor scorecard" sub={`${vendor?.name ?? "Vendor"}: activity, meetings booked and cost per meeting against the KPI targets.`} />
       <div className="mb-6 grid grid-cols-3 gap-3">
         <Stat label="Meetings booked (3 weeks)" value={meetings} />
-        <Stat label="Cost (3 weeks)" value={money(cost)} hint={`${money(targets?.vendorWeeklyCost ?? 0)} a week (sample figure)`} />
+        <Stat label="Cost (3 weeks)" value={money(cost)} hint={`${money(targets?.vendorWeeklyCost ?? 0)} a week (change it under Numbers)`} />
         <Stat label="Cost per meeting" value={perMeeting ? money(perMeeting) : "No meetings"} hint={`Target ${money(targets?.costPerMeeting ?? 0)} or less`} tone={perMeeting && targets && perMeeting > targets.costPerMeeting ? "warn" : undefined} />
       </div>
       <KpiTable weeks={weeks} targets={targets as unknown as Record<string, number>} scale={0.5} />

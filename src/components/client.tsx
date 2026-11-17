@@ -8,7 +8,7 @@ import { useState } from "react";
 type Tab = [href: string, label: string];
 const SECTIONS: { href: string; label: string; tabs?: Tab[]; counter?: string }[] = [
   { href: "/", label: "Today" },
-  { href: "/bd/actions", label: "To do", tabs: [["/bd/actions", "Business development"], ["/sourcing/actions", "Candidates"]] },
+  { href: "/bd/actions", label: "To do", tabs: [["/bd/actions", "Business development"], ["/sourcing/actions", "Candidates"], ["/bd/progress", "In progress"], ["/bd/activity", "Activity"]] },
   { href: "/bd/signals", label: "New leads", counter: "/bd/signals", tabs: [["/bd/signals", "Signals"], ["/bd/jobs", "Job alerts"], ["/bd/staffing", "Staffing firms"]] },
   { href: "/bd/calls", label: "Calls", counter: "/bd/calls" },
   { href: "/bd/connections", label: "LinkedIn", counter: "/bd/connections", tabs: [["/bd/connections", "Connection queue"], ["/bd/drafts", "Drafts to review"]] },
