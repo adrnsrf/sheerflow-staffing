@@ -1,0 +1,23 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --color-ink: #16202b;
+  --color-brand: #0f766e;
+  --color-brand-dark: #0b5952;
+}
+
+body { background: #f6f5f2; color: var(--color-ink); }
+
+@layer components {
+  .card { @apply rounded-xl border border-stone-200 bg-white shadow-[0_1px_2px_rgba(22,32,43,0.04)]; }
+  .btn { @apply inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-md border border-stone-300 bg-white px-2.5 py-1 text-xs font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 whitespace-nowrap; }
+  .btn-primary { @apply border-brand bg-brand text-white hover:border-brand-dark hover:bg-brand-dark; }
+  .btn-danger { @apply text-rose-700 hover:border-rose-300 hover:bg-rose-50; }
+  .tbl { @apply w-full text-sm; }
+  .tbl th { @apply border-b border-stone-200 px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-stone-500; }
+  .tbl td { @apply border-b border-stone-100 px-4 py-3 align-top; }
+  .tbl tr:last-child td { @apply border-b-0; }
+  .muted { @apply text-stone-500; }
+  .field { @apply rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-brand; }
+}
