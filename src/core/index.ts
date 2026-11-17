@@ -15,7 +15,7 @@ export function normalizeDomain(input: string) {
 }
 
 /** Add a company, or return the existing one when the domain is already known. */
-export async function upsertCompany(input: { name: string; domain: string; industry?: string; location?: string; employees?: number; icpTier?: "A" | "B" | "C"; icpScore?: number }) {
+export async function upsertCompany(input: { name: string; domain: string; industry?: string; location?: string; employees?: number; icpTier?: "A" | "B" | "C"; icpScore?: number; hqPhone?: string; apolloId?: string }) {
   const db = await getDb();
   const domain = normalizeDomain(input.domain);
   const [existing] = await db.select().from(s.companies).where(eq(s.companies.domain, domain));
@@ -328,6 +328,25 @@ export async function getCredits() {
   const balance = ledger[0]?.balanceAfter ?? budget.cycleCredits;
   const reserve = Math.round((budget.cycleCredits * budget.reservePct) / 100);
   return { ledger, budget, balance, reserve, spendable: Math.max(0, balance - reserve), spent: budget.cycleCredits - balance };
+}
+
+/** Record the real Apollo balance (from a Claude run or the API) so the budget screen stays honest. Appends; never edits history. */
+export async function recordCredits(input: { balance: number; reason: string }) {
+  const db = await getDb();
+  const [last] = await db.select().from(s.creditLedger).orderBy(desc(s.creditLedger.createdAt), desc(s.creditLedger.id)).limit(1);
+  const [row] = await db.insert(s.creditLedger).values({ delta: input.balance - (last?.balanceAfter ?? input.balance), reason: input.reason, balanceAfter: input.balance }).returning();
+  return row;
+}
+
+/** Bring companies in from an outside source. Appends new ones; anything already known (by domain) is left untouched. */
+export async function importCompanies(rows: { name: string; domain: string | null; industry?: string | null; location?: string | null; employees?: number | null; phone?: string | null; apolloId?: string | null }[]) {
+  let added = 0, skipped = 0, noDomain = 0;
+  for (const r of rows) {
+    if (!r.domain) { noDomain++; continue; }
+    const { created } = await upsertCompany({ name: r.name, domain: r.domain, industry: r.industry ?? undefined, location: r.location ?? undefined, employees: r.employees ?? undefined, hqPhone: r.phone ?? undefined, apolloId: r.apolloId ?? undefined });
+    if (created) added++; else skipped++;
+  }
+  return { added, skipped, noDomain };
 }
 
 /** The numbers on the Today screen, and what Claude sees first when it asks "what's going on?". */

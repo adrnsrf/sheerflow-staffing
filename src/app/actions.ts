@@ -1,6 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
+import { ApolloError, apolloAccountsInList } from "@/connectors/apollo";
 import * as core from "@/core";
 import type { CallOutcome, CandidateStage, ConnectionStatus, SignalStatus } from "@/db/schema";
 
@@ -22,4 +24,20 @@ export async function candidateStageAction(f: FormData) { await core.setCandidat
 export async function queueJobAction(f: FormData) {
   await core.queueJob({ kind: str(f, "kind") ?? "custom", title: str(f, "title") ?? "Job", payload: JSON.parse(str(f, "payload") ?? "{}") });
   done();
+}
+
+/** Pull one page of saved accounts from an Apollo list into Accounts. Costs no credits. */
+export async function importApolloListAction(f: FormData) {
+  const listId = str(f, "listId") ?? "", page = num(f, "page") || 1;
+  let query: string;
+  try {
+    const { accounts, totalPages } = await apolloAccountsInList(listId, page, 25);
+    const r = await core.importCompanies(accounts);
+    query = new URLSearchParams({ list: listId, page: String(page), pages: String(totalPages), added: String(r.added), skipped: String(r.skipped), noDomain: String(r.noDomain) }).toString();
+  } catch (e) {
+    if (!(e instanceof ApolloError)) throw e;
+    query = new URLSearchParams({ error: e.message }).toString();
+  }
+  done();
+  redirect(`/system/connectors/apollo?${query}`);
 }

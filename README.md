@@ -49,7 +49,7 @@ src/core/index.ts     All the rules, in one place: dedupe, ranking, call outcome
                       connection queue, the job queue, KPIs, credit reserve.
 src/app/              The screens. Buttons call src/app/actions.ts, which calls src/core.
 src/mcp/server.ts     The tools Claude gets. Each one calls the same src/core function a button does.
-src/connectors/       One entry per outside tool (Apollo, Gmail, Sheets, ...). All sample mode for now.
+src/connectors/       One entry per outside tool (Apollo, Gmail, Sheets, ...). Apollo goes live with a key; the rest are sample mode.
 drizzle/              Database migrations, generated from the schema (npm run db:generate).
 ```
 
@@ -89,8 +89,22 @@ credits. Do-not-contact companies cannot be put on the call list. Connection not
 | Pipeline | Stages with fee forecast | Moving deals between stages |
 | Sourcing | Searches, candidate stages, talent pool search | Screens, scorecards, submittal packets |
 | Management | Agreements, money, KPIs, vendor scorecard, credit budget | PandaDoc / Docusign / QuickBooks data, real targets |
-| Claude | 17 MCP tools, job queue | Routines moved over to write here instead of the sheets |
+| Claude | 19 MCP tools, job queue | Routines moved over to write here instead of the sheets |
 | Logins | None: one local user | Supabase login for reps and D Foster |
+
+## Apollo
+
+Apollo data reaches the app two ways, and both end in the same `src/core` functions:
+
+- **Through Claude (no key needed).** A Claude run reads Apollo with its own connector, then
+  writes here with `import_companies`, `add_signal` and `record_apollo_credits`. This runs on
+  your Claude account and is where anything that costs credits belongs, behind your approval.
+- **Directly (API key).** Put `APOLLO_API_KEY=your-key` in `.env.local` and restart. The Apollo
+  screen (Connections, Apollo, Open) then lists your saved lists and imports companies from a
+  list 25 at a time. Only zero-credit reads are built: `src/connectors/apollo.ts`.
+
+The direct path has not been run against Apollo yet (no key was available when it was written),
+so expect small fixes to field names on first use.
 
 ## Making a connector live
 

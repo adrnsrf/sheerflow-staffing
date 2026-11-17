@@ -5,7 +5,9 @@
  * `test()` (and add real methods) with calls to the provider's API.
  */
 
-export type ConnectorMode = "sample" | "manual" | "via_claude" | "later";
+import { apolloConfigured, apolloLists } from "./apollo";
+
+export type ConnectorMode = "live" | "sample" | "manual" | "via_claude" | "later";
 
 export interface Connector {
   id: string;
@@ -15,14 +17,23 @@ export interface Connector {
   mode: ConnectorMode;
   /** Env vars that will switch this connector to live once it is built. */
   envVars: string[];
+  /** A page with more to do for this connector. */
+  href?: string;
   /** A cheap read that proves the connector answers. Sample data in v0. */
   test?: () => Promise<string>;
 }
 
-export const connectors: Connector[] = [
+// A function, so each request sees the current env (a key added to .env.local shows up after a restart).
+export const getConnectors = (): Connector[] => [
   {
-    id: "apollo", name: "Apollo", how: "API", usedFor: "IDs free, reveals on approval, sequences, lists", mode: "sample", envVars: ["APOLLO_API_KEY"],
-    test: async () => "Sample: company search for 'US, 51 to 500 employees, data roles in last 60 days' returned 3 matches (Northwind Freight, Brightpath Health, Lumen Grocers). 0 credits spent.",
+    id: "apollo", name: "Apollo", how: "API", usedFor: "IDs free, reveals on approval, sequences, lists", mode: apolloConfigured() ? "live" : "sample", envVars: ["APOLLO_API_KEY"], href: "/system/connectors/apollo",
+    test: async () => {
+      if (!apolloConfigured()) return "Sample: no API key set, so nothing was called. Add APOLLO_API_KEY to .env.local to go live.";
+      try {
+        const lists = await apolloLists();
+        return `Live: key accepted. ${lists.length} saved lists found, largest is "${lists[0]?.name}" (${lists[0]?.count.toLocaleString()} records). 0 credits spent.`;
+      } catch (e) { return `Live, but the call failed: ${e instanceof Error ? e.message : e}`; }
+    },
   },
   {
     id: "gmail", name: "Gmail", how: "Google API", usedFor: "Job alerts in, drafts out, reply tracking", mode: "sample", envVars: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
@@ -50,4 +61,4 @@ export const connectors: Connector[] = [
   { id: "slack", name: "Slack", how: "Connector, optional", usedFor: "Team alerts", mode: "later", envVars: ["SLACK_BOT_TOKEN"] },
 ];
 
-export const getConnector = (id: string) => connectors.find((c) => c.id === id);
+export const getConnector = (id: string) => getConnectors().find((c) => c.id === id);

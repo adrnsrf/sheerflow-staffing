@@ -80,6 +80,14 @@ export function buildMcpServer() {
   server.registerTool("add_task", { description: "Add a task for a person on the team.", inputSchema: { title: z.string(), owner_id: z.number().optional(), company_id: z.number().optional(), due_date: z.string().optional() } },
     safe(async (a) => core.addTask({ title: a.title, ownerId: a.owner_id, companyId: a.company_id, dueDate: a.due_date })));
 
+  server.registerTool("record_apollo_credits", { description: "Record the current Apollo credit balance and what the run spent it on. Call after any run that used Apollo, with the balance Apollo reports.", inputSchema: { balance: z.number(), reason: z.string() } },
+    safe(async (a) => core.recordCredits(a)));
+
+  server.registerTool("import_companies", {
+    description: "Add companies found elsewhere (for example through the Apollo connector). Deduped on domain: known companies are skipped, never overwritten.",
+    inputSchema: { companies: z.array(z.object({ name: z.string(), domain: z.string(), industry: z.string().optional(), location: z.string().optional(), employees: z.number().optional(), phone: z.string().optional(), apollo_id: z.string().optional() })).max(200) },
+  }, safe(async (a) => core.importCompanies(a.companies.map((c) => ({ ...c, apolloId: c.apollo_id })))));
+
   server.registerTool("complete_job", { description: "Mark a queued job done (or failed) with a short result summary.", inputSchema: { job_id: z.number(), result: z.string(), failed: z.boolean().default(false) } },
     safe(async (a) => core.completeJob(a.job_id, a.result, a.failed)));
 
