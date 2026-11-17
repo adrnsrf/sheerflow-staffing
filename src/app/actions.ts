@@ -8,6 +8,7 @@ import path from "node:path";
 import * as core from "@/core";
 import * as imports from "@/core/imports";
 import * as context from "@/core/context";
+import * as signals from "@/core/signals";
 import * as staffing from "@/core/staffing";
 import { IMPORTS_DIR } from "@/db/client";
 import type { CallOutcome, CandidateStage, ConnectionStatus, ContextKind, JobPostingStatus, SignalStatus, StaffingStatus } from "@/db/schema";
@@ -115,3 +116,6 @@ export async function connectionsUploadAction(f: FormData) {
   done();
   redirect(`/bd/connections?${query}`);
 }
+
+/** Change how much a kind of signal counts, and how fast it fades. */
+export async function signalTypeAction(f: FormData) { await signals.updateSignalType(str(f, "type") ?? "", num(f, "weight"), num(f, "halfLifeDays")); done(); }

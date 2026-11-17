@@ -52,7 +52,10 @@ src/core/             All the rules, in one place.
   staffing.ts         The staffing-firm archive and the check against it.
   context.ts          The AI context store (skills and routines).
   imports.ts          Importers for the sheets, job alert emails and LinkedIn's export.
+  signals.ts          Reads the signal model; feeds Apollo intent and job postings.
+  decisions.ts        The rules that turn scores into Next actions.
 context/              Shipped skills and routines, as Markdown. Copied into the database on start.
+models/               The transformation layer: one SQL SELECT per file, built as database views.
 src/app/              The screens. Buttons call src/app/actions.ts, which calls src/core.
 src/mcp/server.ts     The tools Claude gets. Each one calls the same src/core function a button does.
 src/connectors/       One entry per outside tool (Apollo, Gmail, Sheets, ...). Apollo goes live with a key; the rest are sample mode.
@@ -95,7 +98,8 @@ credits. Do-not-contact companies cannot be put on the call list. Connection not
 | Pipeline | Stages with fee forecast | Moving deals between stages |
 | Sourcing | Searches, candidate stages, talent pool search | Screens, scorecards, submittal packets |
 | Management | Agreements, money, KPIs, vendor scorecard, credit budget | PandaDoc / Docusign / QuickBooks data, real targets |
-| Claude | 30 MCP tools, job queue, AI context store | Routines moved over to write here instead of the sheets |
+| Signals | Scored signal model, Next actions with reasons, editable weights | Apollo intent and Apollo job postings have no data until the routine runs |
+| Claude | 34 MCP tools, job queue, AI context store | Routines moved over to write here instead of the sheets |
 | Logins | None: one local user | Supabase login for reps and D Foster |
 
 ## Real data: imports
@@ -162,6 +166,48 @@ What the buttons do instead:
   interested, do not contact). The row's status follows from it (not started, attempting,
   connected, meeting booked, needs info, closed, do not contact). A bad number only stalls a row
   when no other number is left to try. The sheet's "Error" maps to needs info.
+
+## Signals and next actions
+
+Every reason to reach out is a signal. Sources keep their own base tables; SQL views in
+`models/` put them in one shape and score them; a small set of rules turns the scores into
+suggestions.
+
+```
+base tables                      staging views (one per source)        marts
+signals (LinkedIn posts, events) stg_signal_linkedin_posts   person
+job_postings (LinkedIn, Apollo)  stg_signal_job_postings     company
+apollo_intent                    stg_signal_apollo_intent    company   signals_fact  ->  company_heat
+companies (research columns)     stg_signal_company_research company        |            person_heat
+people (time in role)            stg_signal_new_in_role      person         v
+call_log, people, activities     stg_signal_engagement       person    Next actions (src/core/decisions.ts)
+signals (other one-offs)         stg_signal_other_events     company
+```
+
+- **signals_fact** has one row per signal event: level (company or person), type, source, date,
+  title, and a score. Score = the type's weight x strength x decay, where decay halves the value
+  every half-life. Weights and half-lives are on the Signal scoring screen and can be changed.
+- **company_heat** adds a company's signals up, with each type capped at 1.5x its weight, and
+  adds fit (thin recruiting team, 51 to 500 people, a data team, ICP tier). Priority = heat + fit.
+- **Next actions** applies rules to where things stand: accepted on LinkedIn and not messaged
+  means message; a note is ready means send the request; a hot person with no connection means
+  connect; a week without a LinkedIn answer means call; spoke and no follow-up means follow up;
+  a hot, fitting company nobody is calling means add it to the call list; a bad number or wrong
+  contact means research. Each suggestion shows the signals behind it. The call list is ordered
+  by priority.
+
+To add a new signal source: add a base table (or reuse one), add one `stg_signal_*.sql` file
+with the same eleven columns, add it to the union in `models/marts/signals_fact.sql`, and add
+its type on the Signal scoring screen's table (`signal_types`).
+
+### Why no Airflow or dbt yet
+
+The models folder follows dbt's layout (staging, marts, one SELECT per file) so the files can
+become dbt models unchanged. They are not run by dbt today because the database lives inside
+the app (dbt cannot connect to it), and at a few thousand rows plain views are always fresh
+with nothing to schedule. Airflow would be a second server to run for jobs that Claude routines
+already do. The point to adopt them is after moving to a hosted Postgres (Supabase): dbt first,
+for tests and history tables; a scheduler only if routines need to run without a Claude session.
 
 ## Staffing firms
 

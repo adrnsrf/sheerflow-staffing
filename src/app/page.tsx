@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { addTaskAction, taskDoneAction } from "@/app/actions";
 import { Act, Badge, PageHeader, SampleNote, Stat } from "@/components/ui";
-import { getKpis, getOverview, listSignals, listTasks, listUsers } from "@/core";
+import { getKpis, getOverview, listTasks, listUsers } from "@/core";
+import { getNextActions } from "@/core/decisions";
 import { isDue, rel } from "@/lib/format";
 
 export default async function Today() {
-  const [o, tasks, signals, [week], users] = await Promise.all([getOverview(), listTasks({ openOnly: true }), listSignals({ status: "new", limit: 5 }), getKpis({ weeks: 1 }), listUsers()]);
+  const [o, tasks, actions, [week], users] = await Promise.all([getOverview(), listTasks({ openOnly: true }), getNextActions({ limit: 6 }), getKpis({ weeks: 1 }), listUsers()]);
   return (
     <>
       <PageHeader title="Today" sub="What's hot and what's next, across business development, sourcing and the business." />
@@ -41,13 +42,14 @@ export default async function Today() {
         <div className="space-y-6">
           <section className="card">
             <div className="flex items-center justify-between border-b border-stone-200 px-4 py-3">
-              <h2 className="text-sm font-semibold">Hottest new signals</h2><Link href="/bd/signals" className="text-xs font-medium text-brand hover:underline">Open inbox</Link>
+              <h2 className="text-sm font-semibold">Do next</h2><Link href="/bd/actions" className="text-xs font-medium text-brand hover:underline">All next actions</Link>
             </div>
             <ul>
-              {signals.map(({ signal, company }) => (
-                <li key={signal.id} className="border-b border-stone-100 px-4 py-2.5 text-sm last:border-b-0">
-                  <div className="truncate">{signal.title}</div>
-                  <div className="muted text-xs">{company?.name} · Tier {company?.icpTier ?? "?"} · {rel(signal.signalDate)}</div>
+              {actions.length === 0 && <li className="muted px-4 py-3 text-sm">Nothing yet. Signals will put suggestions here.</li>}
+              {actions.map((a) => (
+                <li key={a.key} className="border-b border-stone-100 px-4 py-2.5 text-sm last:border-b-0">
+                  <div className="flex items-center justify-between gap-2"><Link href="/bd/actions" className="truncate font-medium hover:underline">{a.headline}</Link><Badge tone={a.when === "Today" ? "amber" : "gray"}>{a.when}</Badge></div>
+                  <div className="muted truncate text-xs">{a.company.name} · {a.why[0]}</div>
                 </li>
               ))}
             </ul>

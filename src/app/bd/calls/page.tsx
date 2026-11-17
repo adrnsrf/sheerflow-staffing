@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { logCallAction } from "@/app/actions";
 import { CopyButton } from "@/components/client";
-import { Badge, PageHeader, Tier, type Tone } from "@/components/ui";
+import { Badge, PageHeader, type Tone } from "@/components/ui";
 import { listCallList, listUsers, usable } from "@/core";
+import { allCompanyHeat } from "@/core/signals";
 import type { CallOutcome, CallQueueStatus } from "@/db/schema";
 import { isDue, label, rel } from "@/lib/format";
 
@@ -24,7 +25,11 @@ export default async function Calls({ searchParams }: { searchParams: Promise<{ 
   const sp = await searchParams;
   const owner = Number(sp.owner) || undefined;
   const status = FILTERS.find((f) => f === sp.status);
-  const [rows, users] = await Promise.all([listCallList({ ownerId: owner }), listUsers()]);
+  const [list, users, heat] = await Promise.all([listCallList({ ownerId: owner }), listUsers(), allCompanyHeat()]);
+  // Call order: rows that are due come first, and within each group the hottest company leads.
+  const priority = new Map(heat.map((h) => [h.company_id, h]));
+  const pri = (id: number) => priority.get(id)?.priority ?? 0;
+  const rows = [...list].sort((a, b) => Number(isDue(b.entry.nextStepDate)) - Number(isDue(a.entry.nextStepDate)) || pri(b.company.id) - pri(a.company.id));
   const open = rows.filter((r) => !["closed", "do_not_contact", "meeting_booked"].includes(r.entry.status));
   const closed = rows.filter((r) => !open.includes(r));
   const matching = status ? open.filter((r) => r.entry.status === status) : open;
@@ -32,7 +37,7 @@ export default async function Calls({ searchParams }: { searchParams: Promise<{ 
   const href = (p: Record<string, string | number | undefined>) => "/bd/calls?" + new URLSearchParams(Object.entries({ owner, status, ...p }).filter(([, x]) => x != null).map(([k, x]) => [k, String(x)])).toString();
   return (
     <>
-      <PageHeader title="Call list" sub="Pick the number you dialed and press what happened. The call is logged against that number and the row's status follows.">
+      <PageHeader title="Call list" sub="Hottest first. Pick the number you dialed and press what happened. The call is logged against that number and the row's status follows.">
         <Link href={href({ owner: undefined })} className={`btn ${!owner ? "btn-primary" : ""}`}>Everyone</Link>
         {users.map((u) => <Link key={u.id} href={href({ owner: u.id })} className={`btn ${owner === u.id ? "btn-primary" : ""}`}>{u.name}</Link>)}
       </PageHeader>
@@ -50,7 +55,7 @@ export default async function Calls({ searchParams }: { searchParams: Promise<{ 
                 <div className="min-w-0 lg:col-span-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <Link href={`/bd/accounts/${company.id}`} className="font-semibold hover:underline">{company.name}</Link>
-                    <Tier tier={company.icpTier} score={company.icpScore} />
+                    <Badge tone={pri(company.id) >= 45 ? "amber" : "gray"}>Priority {Math.round(pri(company.id))}</Badge>
                     <Badge tone={STATUS[entry.status][1]}>{STATUS[entry.status][0]}</Badge>
                     {entry.nextStepDate && <Badge tone={isDue(entry.nextStepDate) ? "amber" : "gray"}>{entry.nextStep ?? "Next step"}: {rel(entry.nextStepDate)}</Badge>}
                   </div>

@@ -4,12 +4,14 @@ import { addToCallListAction, queueJobAction } from "@/app/actions";
 import { LinkedInActions } from "@/components/linkedin";
 import { Act, Badge, PageHeader, Tier } from "@/components/ui";
 import { fee, getAccount } from "@/core";
+import { companyHeat, companySignals } from "@/core/signals";
 import { fmtDate, label, money } from "@/lib/format";
 
 export default async function Account({ params }: { params: Promise<{ id: string }> }) {
   const acct = await getAccount(Number((await params).id));
   if (!acct) notFound();
-  const { company: c, people, signals, timeline, queue, deals, searches, phones } = acct;
+  const { company: c, people, timeline, queue, deals, searches, phones } = acct;
+  const [facts, heat] = await Promise.all([companySignals(c.id), companyHeat(c.id)]);
   const dnc = c.status === "do_not_contact";
   return (
     <>
@@ -34,12 +36,19 @@ export default async function Account({ params }: { params: Promise<{ id: string
             {queue?.alternateDms && <div className="mt-3 text-sm"><div className="muted text-xs">Alternate decision makers (names masked until revealed)</div><div className="whitespace-pre-line">{queue.alternateDms}</div></div>}
           </section>
           <section className="card">
-            <h2 className="border-b border-stone-200 px-4 py-3 text-sm font-semibold">Signals</h2>
-            {signals.length === 0 && <p className="muted p-4 text-sm">None yet.</p>}
-            {signals.map((sg) => (
-              <div key={sg.id} className="flex items-start justify-between gap-3 border-b border-stone-100 px-4 py-2.5 text-sm last:border-b-0">
-                <div><div>{sg.title}</div><div className="muted text-xs">{sg.source} · {fmtDate(sg.signalDate)}</div></div>
-                <Badge tone={sg.status === "new" ? "teal" : "gray"}>{label(sg.status)}</Badge>
+            <div className="flex items-center justify-between border-b border-stone-200 px-4 py-3">
+              <h2 className="text-sm font-semibold">Why now</h2>
+              {heat && <span className="text-xs"><span className="font-semibold tabular-nums">Priority {Math.round(heat.priority)}</span><span className="muted"> = heat {Math.round(heat.heat)} + fit {Math.round(heat.fit)}</span></span>}
+            </div>
+            {facts.length === 0 && <p className="muted p-4 text-sm">No signals yet.</p>}
+            {facts.map((f) => (
+              <div key={f.signal_id} className="flex items-start gap-3 border-b border-stone-100 px-4 py-2.5 text-sm last:border-b-0">
+                <span className="w-10 shrink-0 text-right font-semibold tabular-nums text-brand" title={`${f.weight} points when fresh, halves every ${f.half_life_days} days`}>{f.score.toFixed(0)}</span>
+                <div className="min-w-0 flex-1">
+                  <div>{f.url ? <a href={f.url} target="_blank" rel="noreferrer" className="hover:underline">{f.title}</a> : f.title}</div>
+                  <div className="muted text-xs">{f.type_label} · {f.source} · {fmtDate(f.occurred_at)}{f.detail && ` · ${f.detail.slice(0, 140)}`}</div>
+                </div>
+                <Badge tone={f.level === "person" ? "teal" : "blue"}>{f.level === "person" ? "Person" : "Company"}</Badge>
               </div>
             ))}
           </section>
@@ -51,7 +60,7 @@ export default async function Account({ params }: { params: Promise<{ id: string
                 <tbody>
                   {phones.map((p) => (
                     <tr key={p.id}>
-                      <td className={`font-medium tabular-nums ${p.status === "bad" ? "line-through opacity-60" : ""}`}>{p.number}</td>
+                      <td className={`font-medium tabular-nums whitespace-nowrap ${p.status === "bad" ? "line-through opacity-60" : ""}`}>{p.number}</td>
                       <td className="text-xs">{p.personId ? people.find((x) => x.id === p.personId)?.name ?? "Contact" : p.label ?? label(p.kind)}<div className="muted">{label(p.kind)}</div></td>
                       <td className="text-xs">{label(p.source)}{p.sourceDetail && <div className="muted">{p.sourceDetail}</div>}</td>
                       <td><Badge tone={p.status === "good" ? "green" : p.status === "unverified" ? "gray" : "red"}>{label(p.status)}</Badge></td>
@@ -82,7 +91,7 @@ export default async function Account({ params }: { params: Promise<{ id: string
               <div key={p.id} className="border-b border-stone-100 px-4 py-3 text-sm last:border-b-0">
                 <div className="font-medium">{p.name}</div>
                 <div className="muted text-xs">{p.title}</div>
-                <div className="mt-1 text-xs">{p.contactRevealed ? <>{p.email}{p.phone && ` · ${p.phone}`}</> : <span className="muted">Contact not revealed (costs Apollo credits)</span>}</div>
+                <div className="mt-1 text-xs">{p.contactRevealed ? [p.email, p.phone].filter(Boolean).join(" · ") : <span className="muted">Contact not revealed (costs Apollo credits)</span>}</div>
                 <div className="mt-2">{dnc ? <span className="muted text-xs">Do not contact</span> : <LinkedInActions person={p} compact />}</div>
               </div>
             ))}

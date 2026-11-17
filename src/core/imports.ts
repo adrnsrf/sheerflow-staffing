@@ -47,9 +47,10 @@ function outcomeFromNote(text: string, fallback: s.CallOutcome | "other"): s.Cal
   if (/do not (call|contact)|remove (me|us)|stop calling/.test(t)) return "do_not_contact";
   if (/no longer (with|works|at)|left the company|wrong (person|contact)|not the right/.test(t)) return "wrong_person";
   if (/send (an |me an? )?e-?mail|email (him|her|them|me)|requested (an )?e-?mail/.test(t)) return "email_requested";
-  if (/spoke (with|to)|talked (with|to)|conversation with/.test(t)) return "connected";
   if (/voicemail|voice mail|\bvm\b|left (a )?(detailed )?message/.test(t)) return "voicemail";
-  if (/front desk|receptionist|operator|gatekeeper|phone tree|directory|automated|would not transfer/.test(t)) return "gatekeeper";
+  // A menu, a hold queue or a front desk is a gatekeeper even when a person answered.
+  if (/front desk|receptionist|operator|gatekeeper|phone tree|company menu|main menu|directory|automated|auto.?attendant|placed on (a )?hold|would not transfer|not available|no one by that name/.test(t)) return "gatekeeper";
+  if (/spoke (with|to)|talked (with|to)|conversation with/.test(t)) return "connected";
   if (/no answer|rang out|did not answer|didn't answer|rang until/.test(t)) return "no_answer";
   return fallback;
 }
@@ -118,8 +119,9 @@ export async function importCallSheet(rows: Row[]) {
     if (status === "do_not_contact") await db.update(s.companies).set({ status: "do_not_contact" }).where(eq(s.companies.id, company.id));
 
     // Turn the notes into call-log rows, each tied to the number that was dialed. Entries already logged are skipped.
-    const fallback: s.CallOutcome | "other" = status === "connected" ? "connected" : status === "meeting_booked" ? "meeting_booked" : status === "do_not_contact" ? "do_not_contact" : status === "attempting" ? "no_answer" : "other";
     const entries = splitDfcNotes(v(r, "DFC Notes") ?? "", (lastContactAt ?? new Date()).getFullYear());
+    // The row's status only tells us about a call when there is exactly one call. With several, an unreadable note stays "other".
+    const fallback: s.CallOutcome | "other" = entries.length > 1 ? "other" : status === "connected" ? "connected" : status === "meeting_booked" ? "meeting_booked" : status === "do_not_contact" ? "do_not_contact" : status === "attempting" ? "no_answer" : "other";
     if (entries.length === 0 && lastContactAt) entries.push({ date: lastContactAt, text: `${sourceStatus} (from call sheet, no note)` });
     for (const e of entries) {
       if (/^(emailed|e-?mail sent|sent (an )?e-?mail)/i.test(e.text)) {

@@ -9,7 +9,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import * as core from "@/core";
+import { getNextActions } from "@/core/decisions";
 import * as imports from "@/core/imports";
+import * as signals from "@/core/signals";
 import * as context from "@/core/context";
 import { addPhone } from "@/core/phones";
 import * as staffing from "@/core/staffing";
@@ -113,6 +115,20 @@ export function buildMcpServer() {
 
   server.registerTool("search_people", { description: "Find decision makers by name, title or company, optionally by LinkedIn connection status.", annotations: read, inputSchema: { search: z.string().optional(), connection: z.enum(["none", "queued", "note_ready", "sent", "connected"]).optional() } },
     safe(async (a) => (await core.listPeople({ search: a.search, connection: a.connection, limit: 50 })).map(({ person: p, company }) => ({ id: p.id, name: p.name, title: p.title, company: company?.name, linkedin: p.linkedinUrl, connection: p.connectionStatus, note: p.connectionNote }))));
+
+  server.registerTool("get_next_actions", {
+    description: "The ranked list of what Adrian should do next and why: who to connect with, message, call or add to the call list. Each action names the rule and the signals behind it.", annotations: read,
+    inputSchema: { limit: z.number().default(15), kind: z.enum(["follow_up", "message", "send_request", "connect", "call", "add_to_call_list", "research", "find_contact"]).optional() },
+  }, safe(async (a) => (await getNextActions({ limit: a.limit, kind: a.kind })).map((x) => ({ action: x.headline, kind: x.kind, when: x.when, score: x.score, why: x.why, company: x.company, person: x.person && { id: x.person.id, name: x.person.name, title: x.person.title, linkedin: x.person.linkedinUrl }, queueId: x.queueId }))));
+
+  server.registerTool("get_signals", { description: "Every scored signal for one company (its own and its people's), strongest first, with the company's heat, fit and priority.", annotations: read, inputSchema: { company_id: z.number() } },
+    safe(async (a) => ({ heat: await signals.companyHeat(a.company_id), signals: (await signals.companySignals(a.company_id)).map((f) => ({ type: f.type_label, level: f.level, title: f.title, detail: f.detail, source: f.source, date: f.occurred_at, score: f.score, url: f.url })) })));
+
+  server.registerTool("add_apollo_intent", { description: "Record Apollo buying-intent readings (company level) for one of our topics. One reading per company, topic and day; staffing firms are skipped.", inputSchema: { readings: z.array(z.object({ company_name: z.string(), domain: z.string().optional(), apollo_id: z.string().optional(), topic: z.string(), level: z.enum(["high", "medium", "low"]), observed_at: z.string().optional() })).max(200) } },
+    safe(async (a) => signals.addApolloIntent(a.readings.map((r) => ({ companyName: r.company_name, domain: r.domain, apolloId: r.apollo_id, topic: r.topic, level: r.level, observedAt: r.observed_at })))));
+
+  server.registerTool("add_apollo_job_postings", { description: "Record data roles Apollo shows as open at a company we already have (company level). Deduped on Apollo's posting id.", inputSchema: { postings: z.array(z.object({ company_id: z.number(), title: z.string(), location: z.string().optional(), url: z.string().optional(), posted_at: z.string().optional(), apollo_posting_id: z.string().optional() })).max(200) } },
+    safe(async (a) => signals.addApolloJobPostings(a.postings.map((p) => ({ companyId: p.company_id, title: p.title, location: p.location, url: p.url, postedAt: p.posted_at, apolloPostingId: p.apollo_posting_id })))));
 
   server.registerTool("list_context", { description: "The AI context store: skills (standing guidance) and routines (jobs that can be queued), with a one-line summary of each.", annotations: read },
     safe(async () => (await context.listContext()).map(({ slug, kind, title, schedule, summary }) => ({ slug, kind, title, schedule, summary }))));

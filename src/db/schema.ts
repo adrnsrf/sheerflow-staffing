@@ -328,6 +328,32 @@ export const contextDocs = pgTable("context_docs", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** Base table: Apollo buying intent for one of our topics. Company level. Filled by the Apollo signals routine. */
+export const apolloIntent = pgTable("apollo_intent", {
+  id: serial("id").primaryKey(),
+  companyId: integer("company_id").references(() => companies.id),
+  topic: text("topic").notNull(),
+  level: text("level").$type<"high" | "medium" | "low">().notNull(),
+  observedAt: timestamp("observed_at", { withTimezone: true }).notNull().defaultNow(),
+  /** One row per company, topic and day, so re-running a routine does not double count. */
+  dedupeKey: text("dedupe_key").notNull().unique(),
+  createdAt: created(),
+});
+
+/**
+ * The kinds of signal and how much each one counts. `weight` is the points a fresh signal is
+ * worth; `halfLifeDays` is how fast it fades (after one half-life it is worth half).
+ * Editable on the Signal scoring screen.
+ */
+export const signalTypes = pgTable("signal_types", {
+  type: text("type").primaryKey(),
+  level: text("level").$type<"company" | "person">().notNull(),
+  label: text("label").notNull(),
+  weight: integer("weight").notNull(),
+  halfLifeDays: integer("half_life_days").notNull(),
+  description: text("description"),
+});
+
 export type JobStatus = "queued" | "in_progress" | "done" | "failed";
 /**
  * Work queued for Claude. A button in the app adds a row; a Claude run

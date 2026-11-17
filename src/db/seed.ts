@@ -165,6 +165,8 @@ export async function seed(db: Db, opts: { sample: boolean } = { sample: true })
     source: "News", sourceUrl: "https://news.example/quillon-series-b", externalId: "funding-quillon-b", signalDate: ago(2), status: "new",
   });
   await db.insert(s.signals).values(signalRows);
+  // Apollo buying intent readings (company level).
+  await db.insert(s.apolloIntent).values([0, 3, 5, 8, 11].map((ci, i) => ({ companyId: companies[ci].id, topic: i % 2 ? "Data engineering staffing" : "IT staff augmentation", level: (["high", "medium", "high", "low", "medium"] as const)[i], observedAt: ago(i * 3 + 1), dedupeKey: `sample-${ci}` })));
 
   // Call list (the DFC sheet), with its working columns.
   const queueStatuses: s.CallQueueStatus[] = ["new", "attempting", "attempting", "connected", "meeting_booked", "attempting", "new", "needs_info"];

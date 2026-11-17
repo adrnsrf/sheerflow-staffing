@@ -4,6 +4,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { count } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
+import { buildModels } from "./models";
 import * as schema from "./schema";
 import { seed } from "./seed";
 
@@ -19,8 +20,10 @@ const hasImportFiles = () => fs.existsSync(IMPORTS_DIR) && fs.readdirSync(IMPORT
 async function init(): Promise<Db> {
   const dir = process.env.SHEERFLOW_DATA_DIR ?? path.join(process.cwd(), ".data", "pglite");
   fs.mkdirSync(dir, { recursive: true });
-  const db = drizzle(new PGlite(dir), { schema });
+  const pg = new PGlite(dir);
+  const db = drizzle(pg, { schema });
   await migrate(db, { migrationsFolder: path.join(process.cwd(), "drizzle") });
+  await buildModels(pg);
   const [{ n }] = await db.select({ n: count() }).from(schema.users);
   // Sample data fills the app unless real import files are waiting in imports/ (SHEERFLOW_SAMPLE=0 or 1 overrides).
   if (n === 0) await seed(db, { sample: process.env.SHEERFLOW_SAMPLE === "1" || (process.env.SHEERFLOW_SAMPLE !== "0" && !hasImportFiles()) });
