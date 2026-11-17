@@ -1,4 +1,5 @@
 ---
+kind: routine
 name: Weekly DFC call-list refresh
 schedule: Sundays
 summary: Top up the Apollo companies list, pick the hottest 10 to 20 companies not yet on the call list, and add them with a decision maker and better phone numbers.
@@ -19,7 +20,7 @@ Step 1: top up the companies list
 Step 2: promote the hottest to the call list
 1. Rank companies that are not on the call list (`get_call_list`) by heat: open data roles (3+ = 25, 2 = 18, 1 = 10), oldest posting 30+ days (15), new data leader under 6 months (20), funding in 12 months (15), headcount growth 15%+ (15), plus 5 when the recruiting team is 0 to 2 with no technical recruiter. Mark anything you could not check as Unknown.
 2. Take the top 10 to 20. For each, find one primary decision maker and up to three alternates. Reveal the primary's email, and phone only for the top 5, within the credit rules above.
-3. Find better phone numbers than the HQ switchboard (local office lines from the company website) for Alt Company Phones.
+3. Find better phone numbers than the HQ switchboard, following the phone-research skill, and save each with `add_phone_number` (source claude_research, with where you found it).
 4. Save with `import_call_sheet_rows`, one row per company, keys as in the call sheet: Company, Employees, Headcount Growth (6 mo), Company Keywords, Recruiter Team Size, Technical Recruiters, Analytics Team Size, Avg Data Salary ($K), Open Data Roles, Title, Time in Role, Email, Name, Phone, Phone Type, Location, Company Phone, Alt Company Phones, Alternate Decision Makers, company_website, person_linkedin, apollo_account_id, apollo_org_id, apollo_person_id, apollo_contact_id, batch. Leave Call Status, Last Contact Date, Next Step, Next Step Date, Meeting Booked and DFC Notes out: those belong to the callers. Existing rows are never overwritten.
 5. Record the balance with `record_apollo_credits`.
 

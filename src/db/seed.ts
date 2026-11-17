@@ -1,4 +1,6 @@
 import type { Db } from "./client";
+import { eq } from "drizzle-orm";
+import { KNOWN_FIRMS, staffingKey } from "../core/staffing";
 import * as s from "./schema";
 
 /**
@@ -82,6 +84,8 @@ const SETTINGS = [
 
 /** `sample: false` gives an empty app (just the team and settings) ready for real imports. */
 export async function seed(db: Db, opts: { sample: boolean } = { sample: true }) {
+  // The staffing archive starts with firms already seen in the job alerts, plus well-known ones.
+  await db.insert(s.staffingFirms).values(KNOWN_FIRMS.map((name) => ({ name, nameKey: staffingKey(name), status: "confirmed" as const, source: "Starter list", timesSeen: 0 })));
   if (!opts.sample) {
     await db.insert(s.users).values([{ name: "Adrian", role: "owner" }, { name: "D Foster Consulting", role: "vendor" }]);
     await db.insert(s.settings).values(SETTINGS);
@@ -163,31 +167,40 @@ export async function seed(db: Db, opts: { sample: boolean } = { sample: true })
   await db.insert(s.signals).values(signalRows);
 
   // Call list (the DFC sheet), with its working columns.
-  const queueStatuses: s.CallQueueStatus[] = ["new", "attempting", "attempting", "connected", "meeting_booked", "attempting", "new", "dead"];
+  const queueStatuses: s.CallQueueStatus[] = ["new", "attempting", "attempting", "connected", "meeting_booked", "attempting", "new", "needs_info"];
   const queue = await db.insert(s.callQueue).values(companies.slice(0, 14).map((c, i) => {
     const status = queueStatuses[i % 8];
     return {
       companyId: c.id, personId: dms[i].id, ownerId: i % 3 === 1 ? maya.id : dfc.id, status,
       topSignal: signalRows.find((r) => r.companyId === c.id)?.title ?? null,
       lastContactAt: status === "new" ? null : ago(1 + (i % 5)),
-      nextStep: status === "new" ? "First call" : status === "meeting_booked" ? "Send intro deck before meeting" : status === "dead" ? null : "Call back",
-      nextStepDate: status === "dead" ? null : ahead((i % 4) - 1),
+      nextStep: status === "new" ? "First call" : status === "meeting_booked" ? "Send intro deck before meeting" : status === "needs_info" ? "Find a working number" : "Call back",
+      nextStepDate: ahead((i % 4) - 1),
       notes: status === "attempting" ? "HQ line goes to a phone tree. Try the local office number." : null,
       addedBy: "DFC weekly refresh",
     };
   })).returning();
 
-  // Three weeks of call activity so the KPI and vendor pages have something to show.
-  const outcomes: s.CallOutcome[] = ["voicemail", "gatekeeper", "no_answer", "voicemail", "connected", "no_answer", "gatekeeper", "voicemail", "dead_number", "connected", "meeting_booked"];
-  const acts: (typeof s.activities.$inferInsert)[] = [];
+  // Phone numbers, each with its source, and three weeks of calls against them.
+  const phones = await db.insert(s.phoneNumbers).values([
+    ...companies.map((c) => ({ companyId: c.id, number: c.hqPhone!, digits: c.hqPhone!.replace(/\D/g, ""), kind: "company_main" as const, label: "Company phone", source: "apollo" as const })),
+    ...companies.filter((c) => c.altPhones).map((c) => ({ companyId: c.id, number: c.altPhones!.split(": ")[1], digits: c.altPhones!.split(": ")[1].replace(/\D/g, ""), kind: "company_office" as const, label: c.altPhones!.split(": ")[0], source: "claude_research" as const, sourceDetail: "company website office locations page" })),
+    ...dms.filter((p) => p.phone).map((p) => ({ companyId: p.companyId, personId: p.id, number: p.phone!, digits: p.phone!.replace(/\D/g, ""), kind: "mobile" as const, source: "apollo" as const })),
+  ]).returning();
+  const outcomes: s.CallOutcome[] = ["voicemail", "gatekeeper", "no_answer", "voicemail", "connected", "no_answer", "gatekeeper", "voicemail", "bad_number", "connected", "meeting_booked"];
+  const calls: (typeof s.callLog.$inferInsert)[] = [];
   for (let n = 0; n < 150; n++) {
     const q = queue[n % queue.length];
-    acts.push({
-      type: "call", outcome: outcomes[(n * 7 + (n % 5)) % outcomes.length], companyId: q.companyId, personId: q.personId,
-      userId: callers[n % callers.length].id, occurredAt: ago((n * 0.14) % 21, 9 + (n % 8)),
+    const lines = phones.filter((p) => p.companyId === q.companyId);
+    calls.push({
+      callQueueId: q.id, outcome: outcomes[(n * 7 + (n % 5)) % outcomes.length], companyId: q.companyId, personId: q.personId, phoneNumberId: lines[n % lines.length]?.id,
+      userId: callers[n % callers.length].id, calledAt: ago((n * 0.14) % 21, 9 + (n % 8)),
       notes: n % 9 === 4 ? "Good talk. Open to a call about the data engineer role next week." : null,
     });
   }
+  await db.insert(s.callLog).values(calls);
+  for (const c of calls) if (c.outcome === "bad_number" && c.phoneNumberId) await db.update(s.phoneNumbers).set({ status: "bad" }).where(eq(s.phoneNumbers.id, c.phoneNumberId));
+  const acts: (typeof s.activities.$inferInsert)[] = [];
   for (let n = 0; n < 12; n++) {
     acts.push({ type: n % 3 === 0 ? "linkedin" : "email", outcome: n % 4 === 0 ? "replied" : "sent", companyId: companies[n].id, personId: dms[n].id, userId: adrian.id, occurredAt: ago(n * 1.6 + 0.3) });
   }

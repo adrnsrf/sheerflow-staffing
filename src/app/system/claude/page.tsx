@@ -47,9 +47,9 @@ export default async function Claude() {
           </div>
           <div className="card p-4 text-sm">
             <h2 className="mb-2 text-sm font-semibold">What Claude can do</h2>
-            <p><span className="font-medium">Read:</span> <span className="muted">overview, signals, companies, accounts, call list, KPIs, talent pool, jobs.</span></p>
-            <p className="mt-1"><span className="font-medium">Write:</span> <span className="muted">add companies and signals (deduped), log calls, queue connections, save notes and email drafts, add tasks, complete jobs.</span></p>
-            <p className="mt-1"><span className="font-medium">Never:</span> <span className="muted">send email, send a LinkedIn request, or spend Apollo credits.</span></p>
+            <p><span className="font-medium">Read:</span> <span className="muted">overview, signals, companies, accounts with phone numbers and call log, people, call list, job alerts, KPIs, talent pool, jobs, and the AI context store.</span></p>
+            <p className="mt-1"><span className="font-medium">Write:</span> <span className="muted">add companies, signals, job alert emails and sheet rows (all deduped), log calls, save phone numbers with their source, add staffing firms, queue connections, save notes and drafts, add tasks, record credits, complete jobs.</span></p>
+            <p className="mt-1"><span className="font-medium">Never:</span> <span className="muted">send email, send a LinkedIn request, spend Apollo credits, or change its own instructions.</span></p>
           </div>
         </section>
       </div>

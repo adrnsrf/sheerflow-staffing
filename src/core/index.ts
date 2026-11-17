@@ -5,6 +5,8 @@
 import { and, asc, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import * as s from "@/db/schema";
+import { addPhone, phoneStatusAfter, phonesForCompanies, type PhoneWithStats } from "./phones";
+import { checkStaffing } from "./staffing";
 
 const DAY = 86_400_000;
 
@@ -43,6 +45,7 @@ export async function upsertCompany(input: CompanyInput) {
     return { company, created: false };
   }
   const [company] = await db.insert(s.companies).values({ ...input, name, domain, website: input.website ?? (domain ? `https://${domain}` : null) }).returning();
+  if (input.hqPhone) await addPhone({ companyId: company.id, number: input.hqPhone, kind: "company_main", label: "Company phone", source: input.apolloId ? "apollo" : "manual" });
   return { company, created: true };
 }
 
@@ -78,17 +81,26 @@ export async function getAccount(companyId: number) {
   const db = await getDb();
   const [company] = await db.select().from(s.companies).where(eq(s.companies.id, companyId));
   if (!company) return null;
-  const [people, signals, activities, queue, deals, searches] = await Promise.all([
+  const [people, signals, activities, calls, queue, deals, searches, phones] = await Promise.all([
     db.select().from(s.people).where(and(eq(s.people.companyId, companyId), eq(s.people.type, "decision_maker"))),
     db.select().from(s.signals).where(eq(s.signals.companyId, companyId)).orderBy(desc(s.signals.signalDate)),
     db.select({ a: s.activities, user: s.users.name, person: s.people.name }).from(s.activities)
       .leftJoin(s.users, eq(s.activities.userId, s.users.id)).leftJoin(s.people, eq(s.activities.personId, s.people.id))
       .where(eq(s.activities.companyId, companyId)).orderBy(desc(s.activities.occurredAt)).limit(25),
+    db.select({ c: s.callLog, user: s.users.name, person: s.people.name, number: s.phoneNumbers.number }).from(s.callLog)
+      .leftJoin(s.users, eq(s.callLog.userId, s.users.id)).leftJoin(s.people, eq(s.callLog.personId, s.people.id)).leftJoin(s.phoneNumbers, eq(s.callLog.phoneNumberId, s.phoneNumbers.id))
+      .where(eq(s.callLog.companyId, companyId)).orderBy(desc(s.callLog.calledAt)).limit(50),
     db.select().from(s.callQueue).where(eq(s.callQueue.companyId, companyId)),
     db.select().from(s.deals).where(eq(s.deals.companyId, companyId)),
     db.select().from(s.searches).where(eq(s.searches.companyId, companyId)),
+    phonesForCompanies([companyId]),
   ]);
-  return { company, people, signals, activities, queue: queue[0] ?? null, deals, searches };
+  // One timeline: calls from the call log plus every other touch.
+  const timeline = [
+    ...calls.map(({ c, user, person, number }) => ({ key: `c${c.id}`, at: c.calledAt, type: "call", outcome: c.outcome as string, notes: c.notes, user, person, number })),
+    ...activities.map(({ a, user, person }) => ({ key: `a${a.id}`, at: a.occurredAt, type: a.type as string, outcome: a.outcome ?? "", notes: a.notes, user, person, number: null as string | null })),
+  ].sort((x, y) => y.at.getTime() - x.at.getTime());
+  return { company, people, signals, timeline, queue: queue[0] ?? null, deals, searches, phones: phones.get(companyId) ?? [] };
 }
 
 // ---------- Signals ----------
@@ -151,31 +163,48 @@ export async function listCallList(opts: { ownerId?: number; status?: s.CallQueu
     .innerJoin(s.companies, eq(s.callQueue.companyId, s.companies.id)).leftJoin(s.people, eq(s.callQueue.personId, s.people.id)).leftJoin(s.users, eq(s.callQueue.ownerId, s.users.id))
     .where(and(opts.ownerId ? eq(s.callQueue.ownerId, opts.ownerId) : undefined, opts.status ? eq(s.callQueue.status, opts.status) : undefined))
     .orderBy(sql`${s.callQueue.nextStepDate} asc nulls last`);
-  // Gatekeeper and dead-number rates per company show which HQ lines to swap for a local office number.
-  const stats = await db.select({
-    companyId: s.activities.companyId, dials: sql<number>`count(*)::int`,
-    blocked: sql<number>`count(*) filter (where ${s.activities.outcome} in ('gatekeeper','dead_number'))::int`,
-  }).from(s.activities).where(eq(s.activities.type, "call")).groupBy(s.activities.companyId);
-  const byCompany = new Map(stats.map((x) => [x.companyId, x]));
-  return rows.map((r) => ({ ...r, dials: byCompany.get(r.company.id)?.dials ?? 0, blocked: byCompany.get(r.company.id)?.blocked ?? 0 }));
+  const phones = await phonesForCompanies(rows.map((r) => r.company.id));
+  // Each row gets the numbers a caller could dial: the contact's own lines first, then company lines.
+  return rows.map((r) => ({ ...r, phones: rowPhones(phones.get(r.company.id) ?? [], r.person?.id) }));
 }
 
-const OUTCOME_TO_STATUS: Record<s.CallOutcome, s.CallQueueStatus> = {
-  connected: "connected", meeting_booked: "meeting_booked", voicemail: "attempting", gatekeeper: "attempting", no_answer: "attempting", dead_number: "dead", do_not_contact: "do_not_contact",
+const rowPhones = (all: PhoneWithStats[], personId?: number | null) =>
+  [...all.filter((p) => p.personId && p.personId === personId), ...all.filter((p) => !p.personId)];
+export const usable = (p: { status: s.PhoneStatus }) => p.status !== "bad" && p.status !== "do_not_call";
+
+/** The outcome of a call decides where the row stands. Callers pick the outcome; the status follows. */
+export const OUTCOME_TO_STATUS: Record<s.CallOutcome, s.CallQueueStatus> = {
+  connected: "connected", meeting_booked: "meeting_booked", email_requested: "connected",
+  voicemail: "attempting", no_answer: "attempting", gatekeeper: "attempting",
+  bad_number: "needs_info", wrong_person: "needs_info", not_interested: "closed", do_not_contact: "do_not_contact",
+};
+const NEXT_STEP: Record<s.CallOutcome, [string | null, number | null]> = {
+  connected: ["Send follow-up email", 1], meeting_booked: ["Prep for meeting", null], email_requested: ["Send the email they asked for", 0],
+  voicemail: ["Call back", 2], no_answer: ["Call back", 2], gatekeeper: ["Call back, ask for them by name", 2],
+  bad_number: ["Find a working number", 0], wrong_person: ["Find the right contact", 0], not_interested: [null, null], do_not_contact: [null, null],
 };
 
-/** Log a call outcome. Appends an activity and moves the call-list row; past activity is never edited. */
-export async function logCall(input: { queueId: number; outcome: s.CallOutcome; notes?: string; nextStep?: string; nextStepDate?: string; userId?: number }) {
+/**
+ * Log one dial. Adds a call-log row against the number dialed, updates what we know about
+ * that number, and moves the call-list row. Past calls are never edited.
+ */
+export async function logCall(input: { queueId: number; outcome: s.CallOutcome; phoneNumberId?: number; notes?: string; nextStep?: string; nextStepDate?: string; userId?: number }) {
   const db = await getDb();
   const [entry] = await db.select().from(s.callQueue).where(eq(s.callQueue.id, input.queueId));
   if (!entry) throw new Error(`No call-list row with id ${input.queueId}`);
-  await db.insert(s.activities).values({ type: "call", outcome: input.outcome, companyId: entry.companyId, personId: entry.personId, userId: input.userId ?? entry.ownerId, notes: input.notes });
-  const retry = input.outcome === "voicemail" || input.outcome === "gatekeeper" || input.outcome === "no_answer";
+  const phones = rowPhones((await phonesForCompanies([entry.companyId])).get(entry.companyId) ?? [], entry.personId);
+  const dialed = phones.find((p) => p.id === input.phoneNumberId) ?? phones.find(usable) ?? phones[0];
+  await db.insert(s.callLog).values({ callQueueId: entry.id, companyId: entry.companyId, personId: entry.personId, phoneNumberId: dialed?.id, userId: input.userId ?? entry.ownerId, outcome: input.outcome, notes: input.notes });
+  const learned = phoneStatusAfter(input.outcome);
+  if (dialed && learned) await db.update(s.phoneNumbers).set({ status: learned }).where(eq(s.phoneNumbers.id, dialed.id));
+
+  // A bad number only stalls the row when there is no other number left to try.
+  const another = input.outcome === "bad_number" && phones.some((p) => p.id !== dialed?.id && usable(p));
+  const status = another ? "attempting" : OUTCOME_TO_STATUS[input.outcome];
+  const [step, days] = another ? ["Try the next number", 0] : NEXT_STEP[input.outcome];
   const [updated] = await db.update(s.callQueue).set({
-    status: OUTCOME_TO_STATUS[input.outcome], lastContactAt: new Date(),
-    nextStep: input.nextStep ?? (retry ? "Call back" : input.outcome === "connected" ? "Send follow-up email" : input.outcome === "meeting_booked" ? "Prep for meeting" : null),
-    nextStepDate: input.nextStepDate ? new Date(input.nextStepDate) : retry ? new Date(Date.now() + 2 * DAY) : input.outcome === "connected" ? new Date(Date.now() + DAY) : null,
-    notes: input.notes ?? entry.notes,
+    status, lastContactAt: new Date(), nextStep: input.nextStep ?? step,
+    nextStepDate: input.nextStepDate ? new Date(input.nextStepDate) : days == null ? null : new Date(Date.now() + days * DAY),
   }).where(eq(s.callQueue.id, input.queueId)).returning();
   if (input.outcome === "do_not_contact") await db.update(s.companies).set({ status: "do_not_contact" }).where(eq(s.companies.id, entry.companyId));
   return updated;
@@ -363,22 +392,23 @@ export async function getSetting<T>(key: string): Promise<T | null> {
   return (row?.value as T) ?? null;
 }
 
-/** Weekly funnel for the last `weeks` weeks (most recent first), optionally for one caller. */
+/** Weekly funnel for the last `weeks` weeks (most recent first), optionally for one caller. Dials come from the call log. */
 export async function getKpis(opts: { weeks?: number; userId?: number } = {}) {
   const db = await getDb();
   const weeks = opts.weeks ?? 3;
   const since = new Date(Date.now() - weeks * 7 * DAY);
+  const calls = await db.select().from(s.callLog).where(and(gte(s.callLog.calledAt, since), opts.userId ? eq(s.callLog.userId, opts.userId) : undefined));
   const acts = await db.select().from(s.activities).where(and(gte(s.activities.occurredAt, since), opts.userId ? eq(s.activities.userId, opts.userId) : undefined));
   const agreements = await db.select().from(s.agreements);
   const placements = await db.select().from(s.placements);
   return Array.from({ length: weeks }, (_, w) => {
     const from = Date.now() - (w + 1) * 7 * DAY, to = Date.now() - w * 7 * DAY;
     const inWeek = (d: Date | null) => !!d && d.getTime() > from && d.getTime() <= to;
-    const calls = acts.filter((a) => a.type === "call" && inWeek(a.occurredAt));
-    const has = (...o: string[]) => calls.filter((a) => o.includes(a.outcome ?? "")).length;
+    const wk = calls.filter((c) => inWeek(c.calledAt));
+    const has = (...o: string[]) => wk.filter((c) => o.includes(c.outcome)).length;
     return {
       label: w === 0 ? "Last 7 days" : `${w * 7 + 1} to ${(w + 1) * 7} days ago`,
-      dials: calls.length, connects: has("connected", "meeting_booked"), gatekeeper: has("gatekeeper"), deadNumbers: has("dead_number"),
+      dials: wk.length, connects: has("connected", "meeting_booked", "email_requested"), gatekeeper: has("gatekeeper"), badNumbers: has("bad_number"),
       meetingsBooked: has("meeting_booked"), meetingsHeld: acts.filter((a) => a.type === "meeting" && inWeek(a.occurredAt)).length,
       agreements: agreements.filter((a) => inWeek(a.signedAt)).length, placements: placements.filter((p) => inWeek(p.startDate)).length,
     };
@@ -404,13 +434,14 @@ export async function recordCredits(input: { balance: number; reason: string }) 
 
 /** Bring companies in from an outside source. Appends new ones; anything already known (by domain) is left untouched. */
 export async function importCompanies(rows: { name: string; domain: string | null; industry?: string | null; location?: string | null; employees?: number | null; phone?: string | null; apolloId?: string | null }[]) {
-  let added = 0, skipped = 0, noDomain = 0;
+  let added = 0, skipped = 0, noDomain = 0, staffingDropped = 0;
   for (const r of rows) {
     if (!r.domain) { noDomain++; continue; }
+    if (await checkStaffing(r.name, "Company import")) { staffingDropped++; continue; }
     const { created } = await upsertCompany({ name: r.name, domain: r.domain, industry: r.industry ?? undefined, location: r.location ?? undefined, employees: r.employees ?? undefined, hqPhone: r.phone ?? undefined, apolloId: r.apolloId ?? undefined });
     if (created) added++; else skipped++;
   }
-  return { added, skipped, noDomain };
+  return { added, skipped, noDomain, staffingDropped };
 }
 
 /** The numbers on the Today screen, and what Claude sees first when it asks "what's going on?". */
@@ -421,7 +452,7 @@ export async function getOverview() {
   const endOfToday = new Date(new Date().setHours(23, 59, 59, 999));
   const [newSignals, callsDue, notesWaiting, readyToSend, jobsQueued, draftsToReview, openTasks] = await Promise.all([
     n(db.select({ n: c }).from(s.signals).where(eq(s.signals.status, "new"))),
-    n(db.select({ n: c }).from(s.callQueue).where(and(sql`${s.callQueue.nextStepDate} <= ${endOfToday.toISOString()}`, inArray(s.callQueue.status, ["new", "attempting", "connected"])))),
+    n(db.select({ n: c }).from(s.callQueue).where(and(sql`${s.callQueue.nextStepDate} <= ${endOfToday.toISOString()}`, inArray(s.callQueue.status, ["new", "attempting", "connected", "needs_info"])))),
     n(db.select({ n: c }).from(s.people).where(eq(s.people.connectionStatus, "queued"))),
     n(db.select({ n: c }).from(s.people).where(eq(s.people.connectionStatus, "note_ready"))),
     n(db.select({ n: c }).from(s.jobs).where(eq(s.jobs.status, "queued"))),

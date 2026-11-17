@@ -99,7 +99,11 @@ export const signals = pgTable("signals", {
   createdAt: created(),
 });
 
-export type CallQueueStatus = "new" | "attempting" | "connected" | "meeting_booked" | "needs_info" | "dead" | "do_not_contact";
+/**
+ * Where a call-list row stands. Callers never pick this: it follows from the outcome of the
+ * last logged call (see OUTCOME_TO_STATUS in src/core).
+ */
+export type CallQueueStatus = "new" | "attempting" | "connected" | "meeting_booked" | "needs_info" | "closed" | "do_not_contact";
 /** Replaces the DFC call sheet: one row per company a rep is working. */
 export const callQueue = pgTable("call_queue", {
   id: serial("id").primaryKey(),
@@ -124,8 +128,49 @@ export const callQueue = pgTable("call_queue", {
   createdAt: created(),
 });
 
-export type ActivityType = "call" | "email" | "linkedin" | "meeting" | "note";
-export type CallOutcome = "connected" | "voicemail" | "gatekeeper" | "no_answer" | "dead_number" | "do_not_contact" | "meeting_booked";
+export type PhoneKind = "company_main" | "company_office" | "toll_free" | "direct" | "mobile" | "unknown";
+export type PhoneSource = "apollo" | "claude_research" | "call_sheet" | "manual";
+export type PhoneStatus = "unverified" | "good" | "bad" | "do_not_call";
+/**
+ * Every phone number we know, one row each: a company line (personId empty) or a person's line.
+ * `source` says where it came from; `status` is learned from the call log (a bad-number outcome
+ * marks the number bad, not the company).
+ */
+export const phoneNumbers = pgTable("phone_numbers", {
+  id: serial("id").primaryKey(),
+  companyId: integer("company_id").references(() => companies.id),
+  personId: integer("person_id").references(() => people.id),
+  /** As written at the source, for display and dialing. */
+  number: text("number").notNull(),
+  /** Digits only, without a leading US 1. The match key. */
+  digits: text("digits").notNull(),
+  kind: text("kind").$type<PhoneKind>().notNull().default("unknown"),
+  label: text("label"),
+  source: text("source").$type<PhoneSource>().notNull(),
+  sourceDetail: text("source_detail"),
+  status: text("status").$type<PhoneStatus>().notNull().default("unverified"),
+  createdAt: created(),
+});
+
+/** What happened on one dial. */
+export type CallOutcome = "connected" | "meeting_booked" | "email_requested" | "voicemail" | "no_answer" | "gatekeeper" | "bad_number" | "wrong_person" | "not_interested" | "do_not_contact";
+/** One row per dial, tied to the number that was dialed. */
+export const callLog = pgTable("call_log", {
+  id: serial("id").primaryKey(),
+  callQueueId: integer("call_queue_id").references(() => callQueue.id),
+  companyId: integer("company_id").references(() => companies.id),
+  personId: integer("person_id").references(() => people.id),
+  phoneNumberId: integer("phone_number_id").references(() => phoneNumbers.id),
+  userId: integer("user_id").references(() => users.id),
+  outcome: text("outcome").$type<CallOutcome | "other">().notNull(),
+  notes: text("notes"),
+  /** "app" for calls logged with the buttons, "call_sheet" for history read out of DFC Notes (outcome guessed from the wording). */
+  source: text("source").$type<"app" | "call_sheet">().notNull().default("app"),
+  calledAt: timestamp("called_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Touches other than calls: emails, LinkedIn, meetings, notes. Calls live in call_log. */
+export type ActivityType = "email" | "linkedin" | "meeting" | "note";
 export const activities = pgTable("activities", {
   id: serial("id").primaryKey(),
   type: text("type").$type<ActivityType>().notNull(),
@@ -239,11 +284,48 @@ export const jobPostings = pgTable("job_postings", {
   alertKind: text("alert_kind"),
   alertSubject: text("alert_subject"),
   emailThreadId: text("email_thread_id"),
-  /** Staffing firms and job aggregators re-post other companies' jobs; they are flagged, not deleted. */
-  likelyStaffing: boolean("likely_staffing").notNull().default(false),
   status: text("status").$type<JobPostingStatus>().notNull().default("new"),
   receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
   createdAt: created(),
+});
+
+export type StaffingStatus = "confirmed" | "suspected" | "not_staffing";
+/**
+ * Running archive of staffing firms, recruiters and job boards. Anything from a confirmed or
+ * suspected firm is dropped on the way in. "not_staffing" is the allow-list for false alarms.
+ */
+export const staffingFirms = pgTable("staffing_firms", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  /** Lower-case name without punctuation or company suffixes. The match key. */
+  nameKey: text("name_key").notNull().unique(),
+  domain: text("domain"),
+  status: text("status").$type<StaffingStatus>().notNull().default("suspected"),
+  source: text("source").notNull(),
+  note: text("note"),
+  timesSeen: integer("times_seen").notNull().default(1),
+  firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type ContextKind = "routine" | "skill";
+/**
+ * The AI context store: the instructions Claude reads before working in this app.
+ * Routines are jobs that can be queued; skills are standing guidance. Shipped defaults come
+ * from the context/ folder; edits made in the app live here and are never overwritten.
+ */
+export const contextDocs = pgTable("context_docs", {
+  slug: text("slug").primaryKey(),
+  kind: text("kind").$type<ContextKind>().notNull(),
+  title: text("title").notNull(),
+  summary: text("summary"),
+  schedule: text("schedule"),
+  basedOn: text("based_on"),
+  body: text("body").notNull(),
+  /** True when this doc shipped with the app (so it can be reset to the shipped text). */
+  shipped: boolean("shipped").notNull().default(false),
+  edited: boolean("edited").notNull().default(false),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export type JobStatus = "queued" | "in_progress" | "done" | "failed";

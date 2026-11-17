@@ -42,11 +42,17 @@ login in front of it). On your own machine, Claude Code is the way to test.
 ## How it is put together
 
 ```
-src/db/schema.ts      The shared core: companies, people, signals, activities, tasks, call list,
-                      deals, drafts, searches, agreements, placements, Claude jobs, credit ledger.
+src/db/schema.ts      The shared core: companies, people, phone numbers, signals, call list, call log,
+                      activities, job postings, staffing firms, context docs, tasks, deals, drafts,
+                      searches, agreements, placements, Claude jobs, credit ledger.
 src/db/seed.ts        Sample data, shaped like the DFC call sheet and the hiring posts sheet.
-src/core/index.ts     All the rules, in one place: dedupe, ranking, call outcomes, the
-                      connection queue, the job queue, KPIs, credit reserve.
+src/core/             All the rules, in one place.
+  index.ts            Dedupe, ranking, call outcomes and statuses, connection queue, job queue, KPIs.
+  phones.ts           Phone numbers and what the call log says about each one.
+  staffing.ts         The staffing-firm archive and the check against it.
+  context.ts          The AI context store (skills and routines).
+  imports.ts          Importers for the sheets, job alert emails and LinkedIn's export.
+context/              Shipped skills and routines, as Markdown. Copied into the database on start.
 src/app/              The screens. Buttons call src/app/actions.ts, which calls src/core.
 src/mcp/server.ts     The tools Claude gets. Each one calls the same src/core function a button does.
 src/connectors/       One entry per outside tool (Apollo, Gmail, Sheets, ...). Apollo goes live with a key; the rest are sample mode.
@@ -89,7 +95,7 @@ credits. Do-not-contact companies cannot be put on the call list. Connection not
 | Pipeline | Stages with fee forecast | Moving deals between stages |
 | Sourcing | Searches, candidate stages, talent pool search | Screens, scorecards, submittal packets |
 | Management | Agreements, money, KPIs, vendor scorecard, credit budget | PandaDoc / Docusign / QuickBooks data, real targets |
-| Claude | 27 MCP tools, job queue, routines | Routines moved over to write here instead of the sheets |
+| Claude | 30 MCP tools, job queue, AI context store | Routines moved over to write here instead of the sheets |
 | Logins | None: one local user | Supabase login for reps and D Foster |
 
 ## Real data: imports
@@ -98,7 +104,7 @@ The Import screen (System, Import) brings over what the routines have produced s
 
 | Source | Lands in | Dedupe key |
 | --- | --- | --- |
-| DFC call sheet ("Call List - Nov 2026") | Accounts, People, Call list, plus one logged call per dated entry in DFC Notes | Apollo contact id, else LinkedIn URL, else company + name |
+| DFC call sheet ("Call List - Nov 2026") | Accounts, People, Phone numbers, Call list, plus one call-log row per dated entry in DFC Notes | Apollo contact id, else LinkedIn URL, else company + name |
 | LinkedIn hiring posts sheet | Signals inbox, People (posters), Accounts | Post ID |
 | LinkedIn job alert emails | Job alerts | LinkedIn job id |
 | LinkedIn Connections export | Marks people connected | LinkedIn URL |
@@ -142,11 +148,39 @@ What the buttons do instead:
 - **Draft message** (once connected) queues a job; the draft appears in Outreach drafts with a
   "Copy and open profile" button.
 
-## Routines
+## Calls, phone numbers and statuses
 
-`routines/*.md` are the app's own copies of the recurring jobs, rewritten to save into the app
-through the Claude tools. The original skills are not changed. The Routines screen lists them and
-queues a run; Claude reads the instructions with `get_routine`. Nothing runs on a timer yet.
+- **Phone numbers** are their own table: one row per number, for a company line or a person's
+  line, with its source (Apollo, Claude research, call sheet, typed in) and a status learned from
+  calls. Rows link to the app's own company and person records, which carry the Apollo ids; the
+  Apollo id is not the key, because posts and research produce companies Apollo has not seen.
+- **Call log**: one row per dial, tied to the number dialed. A bad-number outcome marks that
+  number bad, not the company. History read out of DFC Notes is tagged `call_sheet` and its
+  outcome is guessed from the wording.
+- **Outcome and status are two things.** The caller picks what happened on the dial (connected,
+  meeting booked, email requested, voicemail, no answer, gatekeeper, bad number, wrong person, not
+  interested, do not contact). The row's status follows from it (not started, attempting,
+  connected, meeting booked, needs info, closed, do not contact). A bad number only stalls a row
+  when no other number is left to try. The sheet's "Error" maps to needs info.
+
+## Staffing firms
+
+`staffing_firms` is a running archive of staffing firms, recruiters and job boards. Anything
+arriving under a listed name (job alert, hiring post, company import) is dropped and the firm's
+count goes up. New names that match a narrow pattern are added as "suspected" for review; mark a
+real employer "not staffing" and it is let through from then on. Claude checks names with
+`check_staffing_firms` and adds confirmed firms with `add_staffing_firm`.
+
+## AI context store
+
+The AI context screen holds what Claude reads before working in the app: **skills** (standing
+guidance such as ground rules, call outcomes, the staffing screen, phone research) and
+**routines** (jobs you can queue). Defaults ship as Markdown in `context/` and are copied into
+the database on start. Edit any of them in the app, or add your own; your version is kept even
+when the shipped file changes, and "Reset to shipped text" undoes your edits. Claude reads the
+store with `list_context` and `get_context` and is told to read `ground-rules` first. It cannot
+write to the store: instructions change only by your hand. The original Claude skills are not
+touched, and nothing runs on a timer yet.
 
 ## Apollo
 
@@ -170,16 +204,13 @@ the methods the core needs (for Apollo: free company and people search, credit b
 
 ## Open questions from the real data
 
-- **Call status wording.** The sheet uses nine statuses (Left Voicemail, Called - No Answer,
-  Error, New Information Needed, Emailed, Wrong Contact, E-mail Requested...). The app maps them
-  to seven. Decide which list the team should use going forward.
-- **Call history.** DFC Notes are split into one logged call per dated entry and the outcome is
-  guessed from the wording. Good enough to spot bad numbers; not exact for KPIs.
+- **Call history is approximate.** DFC Notes are split into one call per dated entry and the
+  outcome is guessed from the wording. 18 of 363 entries could not be classified.
 - **ICP score.** Neither sheet carries a tier or score, so imported accounts show "Unscored" and
   signals rank by date only until scoring runs.
-- **Job alerts are noisy.** About 4 in 10 jobs come from staffing firms or job boards re-posting
-  other companies' roles. They are flagged by name and hidden by default, not deleted.
 - **Posters without a real name.** Some hiring-post rows have a handle instead of a name, and 71
   posts have US? = Unknown.
 - **One company, several sources.** A company from the posts sheet with no website matches the
   call sheet only if the names are identical.
+- **The sheet is still where the team works.** Re-importing refreshes the app from the sheet;
+  calls logged in the app do not flow back to the sheet.

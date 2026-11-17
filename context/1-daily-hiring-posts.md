@@ -1,4 +1,5 @@
 ---
+kind: routine
 name: Daily LinkedIn hiring posts
 schedule: Every weekday morning
 summary: Find new US, in-house posts about hiring data people (or a new data leader) and add them to the Signals inbox.
@@ -14,7 +15,7 @@ Hard limits
 Steps
 1. Discovery by web search, queries of the form `site:linkedin.com/posts "<phrase>"` limited to the past few days. Vary the wording: "we're hiring" + data engineer / analytics engineer / BI developer / data analyst / head of data; "my team is hiring"; "join our data team"; "I'm hiring"; "just joined as head of data" / "VP of data" / "director of analytics". Record which query found each post.
 2. Date every post from its ID: the activity number in the post URL, shifted right 22 bits, is milliseconds since 1970. Keep only posts from the last 3 days.
-3. Drop posts whose poster or company is a staffing, recruiting or RPO firm, whose role is clearly outside the US, or that are not data roles.
+3. Drop posts whose poster or company is a staffing, recruiting or RPO firm, whose role is clearly outside the US, or that are not data roles. Run the company names through `check_staffing_firms` first: it knows every firm seen so far. When you find a new staffing firm yourself, save it with `add_staffing_firm` so it is caught next time.
 4. Categorise: Hiring - own team; Hiring - company; New data leader; Team growth signal.
 5. Enrich by web search (no browser): poster title, company, company website, US? (Yes / No / Unknown), and for hiring posts whether the role is on the company's own careers page (Career Site Verified: Yes / No / Partial, plus the link).
 6. Save with `import_hiring_posts`, up to 100 rows per call. Each row uses these keys: Post ID, Post Date (YYYY-MM-DD), Category, Poster Name, Poster Title, Company, Company Website, Role(s), Location, US?, Post Link, Person LinkedIn, Summary, Search Query, Career Site Verified, Career Page Link, Notes, Found On. The app skips Post IDs it already has, so you do not need to check for duplicates first.

@@ -2,7 +2,7 @@ import type { getKpis } from "@/core";
 
 type Week = Awaited<ReturnType<typeof getKpis>>[number];
 const ROWS: [keyof Week, string, string?][] = [
-  ["dials", "Dials", "dials"], ["connects", "Connects (real decision-maker talks)", "connects"], ["gatekeeper", "Gatekeeper"], ["deadNumbers", "Dead numbers"],
+  ["dials", "Dials", "dials"], ["connects", "Connects (real decision-maker talks)", "connects"], ["gatekeeper", "Gatekeeper"], ["badNumbers", "Bad numbers"],
   ["meetingsBooked", "Meetings booked", "meetings"], ["meetingsHeld", "Meetings held"], ["agreements", "Agreements signed", "agreements"], ["placements", "Placements", "placements"],
 ];
 

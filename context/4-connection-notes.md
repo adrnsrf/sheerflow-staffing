@@ -1,4 +1,5 @@
 ---
+kind: routine
 name: Write LinkedIn connection notes and messages
 schedule: On demand (queued by the Connect? and Draft message buttons)
 summary: Write a short connection note for everyone ticked Connect?, and first messages for people who accepted.

@@ -7,18 +7,17 @@ import { label, rel } from "@/lib/format";
 
 const TABS: JobPostingStatus[] = ["new", "kept", "dismissed"];
 
-export default async function Jobs({ searchParams }: { searchParams: Promise<{ status?: string; staffing?: string }> }) {
+export default async function Jobs({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
   const sp = await searchParams;
   const status = TABS.find((t) => t === sp.status) ?? "new";
-  const showStaffing = sp.staffing === "1";
-  const rows = await listJobPostings({ status, hideStaffing: !showStaffing });
+  const rows = await listJobPostings({ status });
   return (
     <>
-      <PageHeader title="Job alerts" sub="Jobs pulled from LinkedIn job alert emails. A posting shows a company is hiring data people now. Keep the direct employers; staffing firms and job boards that re-post other companies' jobs are hidden by default.">
-        <Link href={`/bd/jobs?status=${status}${showStaffing ? "" : "&staffing=1"}`} className="btn">{showStaffing ? "Hide" : "Show"} staffing firms and job boards</Link>
+      <PageHeader title="Job alerts" sub="Jobs pulled from LinkedIn job alert emails. A posting shows a company is hiring data people now. Jobs from staffing firms and job boards are dropped on the way in.">
+        <Link href="/bd/staffing" className="btn">Staffing firms</Link>
       </PageHeader>
       <div className="mb-4 flex gap-1">
-        {TABS.map((t) => <Link key={t} href={`/bd/jobs?status=${t}${showStaffing ? "&staffing=1" : ""}`} className={`rounded-md px-3 py-1.5 text-sm ${t === status ? "bg-ink font-medium text-white" : "text-stone-600 hover:bg-stone-200"}`}>{label(t)}</Link>)}
+        {TABS.map((t) => <Link key={t} href={`/bd/jobs?status=${t}`} className={`rounded-md px-3 py-1.5 text-sm ${t === status ? "bg-ink font-medium text-white" : "text-stone-600 hover:bg-stone-200"}`}>{label(t)}</Link>)}
       </div>
       {rows.length === 0 ? <Empty>No jobs here. Run the job alerts routine, or import from the Import screen.</Empty> : (
         <div className="card overflow-x-auto">
@@ -30,7 +29,7 @@ export default async function Jobs({ searchParams }: { searchParams: Promise<{ s
                   <td><a href={job.url ?? "#"} target="_blank" rel="noreferrer" className="font-medium hover:underline">{job.title}</a>{job.salary && <div className="muted text-xs">{job.salary}</div>}</td>
                   <td>
                     {company ? <Link href={`/bd/accounts/${company.id}`} className="text-brand hover:underline">{job.companyName}</Link> : job.companyName}{" "}
-                    {company && <Badge tone="green">Existing account</Badge>}{job.likelyStaffing && <Badge tone="amber">Staffing or job board?</Badge>}
+                    {company && <Badge tone="green">Existing account</Badge>}
                   </td>
                   <td className="muted">{job.location}{job.workplace && ` · ${job.workplace}`}</td>
                   <td className="muted whitespace-nowrap text-xs">{rel(job.receivedAt)}<div>{job.alertKind}</div></td>

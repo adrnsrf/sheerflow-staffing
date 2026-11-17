@@ -10,7 +10,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import * as core from "@/core";
 import * as imports from "@/core/imports";
-import { getRoutine, listRoutines } from "@/core/routines";
+import * as context from "@/core/context";
+import { addPhone } from "@/core/phones";
+import * as staffing from "@/core/staffing";
 
 const json = (data: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] });
 const fail = (e: unknown) => ({ content: [{ type: "text" as const, text: e instanceof Error ? e.message : String(e) }], isError: true });
@@ -20,7 +22,9 @@ const safe = <A>(fn: (args: A) => Promise<unknown>) => async (args: A) => {
 const read = { readOnlyHint: true };
 
 export function buildMcpServer() {
-  const server = new McpServer({ name: "sheerflow", version: "0.1.0" });
+  const server = new McpServer({ name: "sheerflow", version: "0.2.0" }, {
+    instructions: "SheerFlow is a staffing business app. Before doing any work, call get_context with slug 'ground-rules'. list_context shows the other skills and routines; read the ones that fit the task. Nothing here sends email, contacts anyone on LinkedIn or spends Apollo credits.",
+  });
 
   // ----- Read tools -----
   server.registerTool("get_overview", { description: "Counts of what needs attention today: new signals, calls due, connection notes waiting, queued jobs, drafts, tasks, Apollo credits.", annotations: read },
@@ -40,10 +44,11 @@ export function buildMcpServer() {
   server.registerTool("get_account", { description: "Everything on one company: brief, people, signals, past touches, call-list row, deals and searches.", annotations: read, inputSchema: { company_id: z.number() } },
     safe(async ({ company_id }) => (await core.getAccount(company_id)) ?? Promise.reject(new Error(`No company with id ${company_id}`))));
 
-  server.registerTool("get_call_list", { description: "The call list (replaces the DFC sheet) with status, next step and gatekeeper/dead-number counts per company.", annotations: read, inputSchema: { owner_id: z.number().optional() } },
+  server.registerTool("get_call_list", { description: "The call list (replaces the DFC sheet) with status, next step, and every phone number for the row with its source and call history.", annotations: read, inputSchema: { owner_id: z.number().optional() } },
     safe(async ({ owner_id }) => (await core.listCallList({ ownerId: owner_id })).map((r) => ({
       queueId: r.entry.id, company: r.company.name, companyId: r.company.id, contact: r.person?.name, title: r.person?.title, owner: r.owner?.name, status: r.entry.status,
-      topSignal: r.entry.topSignal, lastContact: r.entry.lastContactAt, nextStep: r.entry.nextStep, nextStepDate: r.entry.nextStepDate, dials: r.dials, gatekeeperOrDead: r.blocked, notes: r.entry.notes,
+      topSignal: r.entry.topSignal, lastContact: r.entry.lastContactAt, nextStep: r.entry.nextStep, nextStepDate: r.entry.nextStepDate,
+      phones: r.phones.map((p) => ({ id: p.id, number: p.number, kind: p.kind, label: p.label, source: p.source, status: p.status, dials: p.dials, bad: p.bad, gatekeeper: p.gatekeeper, reached: p.reached })),
     }))));
 
   server.registerTool("get_kpis", { description: "Weekly funnel: dials, connects, meetings, agreements, placements, against targets.", annotations: read, inputSchema: { weeks: z.number().default(3) } },
@@ -67,8 +72,8 @@ export function buildMcpServer() {
   server.registerTool("add_to_call_list", { description: "Put a company on the call list. Skipped if it is already there or marked do-not-contact.", inputSchema: { company_id: z.number(), top_signal: z.string().optional(), person_id: z.number().optional() } },
     safe(async (a) => core.addToCallList(a.company_id, { topSignal: a.top_signal, personId: a.person_id, addedBy: "Claude" })));
 
-  server.registerTool("log_call", { description: "Log a call outcome against a call-list row.", inputSchema: { queue_id: z.number(), outcome: z.enum(["connected", "voicemail", "gatekeeper", "no_answer", "dead_number", "do_not_contact", "meeting_booked"]), notes: z.string().optional(), next_step: z.string().optional(), next_step_date: z.string().optional() } },
-    safe(async (a) => core.logCall({ queueId: a.queue_id, outcome: a.outcome, notes: a.notes, nextStep: a.next_step, nextStepDate: a.next_step_date })));
+  server.registerTool("log_call", { description: "Log one dial against a call-list row and the number dialed. The row's status follows from the outcome (see the call-outcomes skill).", inputSchema: { queue_id: z.number(), outcome: z.enum(["connected", "meeting_booked", "email_requested", "voicemail", "no_answer", "gatekeeper", "bad_number", "wrong_person", "not_interested", "do_not_contact"]), phone_number_id: z.number().optional(), notes: z.string().optional(), next_step: z.string().optional(), next_step_date: z.string().optional() } },
+    safe(async (a) => core.logCall({ queueId: a.queue_id, outcome: a.outcome, phoneNumberId: a.phone_number_id, notes: a.notes, nextStep: a.next_step, nextStepDate: a.next_step_date })));
 
   server.registerTool("queue_connection", { description: "Tick Connect? for a person. Does not contact anyone; it only queues a note to be written.", inputSchema: { person_id: z.number() } },
     safe(async (a) => core.queueConnection(a.person_id)));
@@ -97,11 +102,11 @@ export function buildMcpServer() {
   server.registerTool("import_hiring_posts", { description: "Import rows of the LinkedIn hiring posts sheet, keyed by header text (Post ID, Post Date, Category, Poster Name, ...). Deduped on Post ID. Up to 100 rows per call.", inputSchema: { rows: rowsSchema } },
     safe(async (a) => imports.importHiringPosts(a.rows)));
 
-  server.registerTool("add_job_alert_email", { description: "Hand over one LinkedIn job alert email (plain-text body) and the app extracts and stores the jobs in it. Deduped on LinkedIn job id.", inputSchema: { body: z.string(), subject: z.string().optional(), thread_id: z.string().optional(), received_at: z.string().optional() } },
+  server.registerTool("add_job_alert_email", { description: "Hand over one LinkedIn job alert email (plain-text body) and the app extracts and stores the jobs in it. Deduped on LinkedIn job id; jobs from staffing firms and job boards are dropped.", inputSchema: { body: z.string(), subject: z.string().optional(), thread_id: z.string().optional(), received_at: z.string().optional() } },
     safe(async (a) => imports.importJobAlerts(imports.parseJobAlertEmail(a.body, { subject: a.subject, threadId: a.thread_id, receivedAt: a.received_at }))));
 
-  server.registerTool("list_job_postings", { description: "Jobs collected from LinkedIn job alert emails.", annotations: read, inputSchema: { status: z.enum(["new", "kept", "dismissed"]).default("new"), hide_staffing: z.boolean().default(true) } },
-    safe(async (a) => (await imports.listJobPostings({ status: a.status, hideStaffing: a.hide_staffing })).map(({ job, company }) => ({ id: job.id, title: job.title, company: job.companyName, account: company?.id, location: job.location, url: job.url, received: job.receivedAt, likelyStaffing: job.likelyStaffing }))));
+  server.registerTool("list_job_postings", { description: "Jobs collected from LinkedIn job alert emails.", annotations: read, inputSchema: { status: z.enum(["new", "kept", "dismissed"]).default("new") } },
+    safe(async (a) => (await imports.listJobPostings({ status: a.status })).map(({ job, company }) => ({ id: job.id, title: job.title, company: job.companyName, account: company?.id, location: job.location, url: job.url, received: job.receivedAt }))));
 
   server.registerTool("mark_connected", { description: "Record that a LinkedIn connection request was accepted (for example after reading an acceptance email). Does not touch LinkedIn.", inputSchema: { person_id: z.number() } },
     safe(async (a) => core.setConnectionStatus(a.person_id, "connected")));
@@ -109,11 +114,20 @@ export function buildMcpServer() {
   server.registerTool("search_people", { description: "Find decision makers by name, title or company, optionally by LinkedIn connection status.", annotations: read, inputSchema: { search: z.string().optional(), connection: z.enum(["none", "queued", "note_ready", "sent", "connected"]).optional() } },
     safe(async (a) => (await core.listPeople({ search: a.search, connection: a.connection, limit: 50 })).map(({ person: p, company }) => ({ id: p.id, name: p.name, title: p.title, company: company?.name, linkedin: p.linkedinUrl, connection: p.connectionStatus, note: p.connectionNote }))));
 
-  server.registerTool("list_routines", { description: "The routines this app knows how to run, with their schedules.", annotations: read },
-    safe(async () => listRoutines().map(({ id, name, schedule, summary }) => ({ id, name, schedule, summary }))));
+  server.registerTool("list_context", { description: "The AI context store: skills (standing guidance) and routines (jobs that can be queued), with a one-line summary of each.", annotations: read },
+    safe(async () => (await context.listContext()).map(({ slug, kind, title, schedule, summary }) => ({ slug, kind, title, schedule, summary }))));
 
-  server.registerTool("get_routine", { description: "The full instructions for one routine. Read this before working a job whose kind starts with 'routine:'.", annotations: read, inputSchema: { id: z.string() } },
-    safe(async (a) => getRoutine(a.id) ?? Promise.reject(new Error(`No routine named ${a.id}`))));
+  server.registerTool("get_context", { description: "The full text of one skill or routine. Read 'ground-rules' first, and a routine's instructions before working a job whose kind starts with 'routine:'.", annotations: read, inputSchema: { slug: z.string() } },
+    safe(async (a) => (await context.getContext(a.slug)) ?? Promise.reject(new Error(`No context doc named ${a.slug}`))));
+
+  server.registerTool("check_staffing_firms", { description: "Check company names against the staffing archive. Returns which are staffing firms, recruiters or job boards (never prospects).", inputSchema: { names: z.array(z.string()).max(200) } },
+    safe(async (a) => staffing.checkStaffingNames(a.names, "Claude check")));
+
+  server.registerTool("add_staffing_firm", { description: "Add a confirmed staffing firm, recruiter or job board to the archive, with a one-line reason.", inputSchema: { name: z.string(), domain: z.string().optional(), note: z.string().optional() } },
+    safe(async (a) => staffing.addStaffingFirm({ name: a.name, domain: a.domain, note: a.note, status: "confirmed", source: "Claude research" })));
+
+  server.registerTool("add_phone_number", { description: "Save a researched phone number for a company (or one of its people) with where it was found. Skipped if already on file.", inputSchema: { company_id: z.number(), person_id: z.number().optional(), number: z.string(), label: z.string().optional(), source: z.enum(["apollo", "claude_research"]), source_detail: z.string().optional() } },
+    safe(async (a) => (await addPhone({ companyId: a.company_id, personId: a.person_id, number: a.number, label: a.label, source: a.source, sourceDetail: a.source_detail })) ?? Promise.reject(new Error("That does not look like a phone number"))));
 
   server.registerTool("complete_job", { description: "Mark a queued job done (or failed) with a short result summary.", inputSchema: { job_id: z.number(), result: z.string(), failed: z.boolean().default(false) } },
     safe(async (a) => core.completeJob(a.job_id, a.result, a.failed)));

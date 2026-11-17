@@ -15,6 +15,13 @@
       "when": 1794921590351,
       "tag": "0001_motionless_screwball",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794931038639,
+      "tag": "0002_greedy_red_shift",
+      "breakpoints": true
     }
   ]
 }

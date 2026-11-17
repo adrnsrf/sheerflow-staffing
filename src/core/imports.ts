@@ -10,6 +10,8 @@ import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import * as s from "@/db/schema";
 import { normalizeLinkedIn, upsertCompany, upsertPerson } from "./index";
+import { addPhone, extractPhones, phoneDigits, phoneStatusAfter } from "./phones";
+import { addStaffingFirm, checkStaffing } from "./staffing";
 
 type Row = Record<string, string>;
 const v = (r: Row, k: string) => (r[k] ?? "").toString().trim() || undefined;
@@ -28,21 +30,27 @@ const sameRow = (a: Row | null, b: Row) => !!a && Object.keys({ ...a, ...b }).ev
 
 // ---------- Call sheet ----------
 
-/** The sheet's Call Status wording, mapped to the app's smaller set. The original wording is kept in sourceStatus. */
+/**
+ * The sheet's Call Status wording, mapped to the app's statuses. The original wording is kept in
+ * sourceStatus. "Error" in the sheet has meant a number that does not work, so it becomes
+ * "needs info" (find a working number), not a dead lead.
+ */
 export const CALL_STATUS_MAP: Record<string, s.CallQueueStatus> = {
   "not started": "new", "left voicemail": "attempting", "called - no answer": "attempting", emailed: "attempting", "e-mail requested": "connected",
-  connected: "connected", "meeting booked": "meeting_booked", error: "dead", "wrong contact": "needs_info", "new information needed": "needs_info", "do not contact": "do_not_contact",
+  connected: "connected", "meeting booked": "meeting_booked", error: "needs_info", "wrong contact": "needs_info", "new information needed": "needs_info", "do not contact": "do_not_contact",
 };
 
 /** Guess a call outcome from one line of DFC notes. Heuristic: good enough to spot bad numbers, not for exact counts. */
-function outcomeFromNote(text: string, fallback: string): string {
+function outcomeFromNote(text: string, fallback: s.CallOutcome | "other"): s.CallOutcome | "other" {
   const t = text.toLowerCase();
-  if (/not in service|disconnected|wrong number|invalid|not a working|no longer/.test(t)) return "dead_number";
+  if (/not in service|disconnected|wrong number|invalid|not a working|no longer in|fax (line|number|machine)/.test(t)) return "bad_number";
+  if (/do not (call|contact)|remove (me|us)|stop calling/.test(t)) return "do_not_contact";
+  if (/no longer (with|works|at)|left the company|wrong (person|contact)|not the right/.test(t)) return "wrong_person";
+  if (/send (an |me an? )?e-?mail|email (him|her|them|me)|requested (an )?e-?mail/.test(t)) return "email_requested";
   if (/spoke (with|to)|talked (with|to)|conversation with/.test(t)) return "connected";
-  if (/voicemail|voice mail|\bvm\b|left (a )?message/.test(t)) return "voicemail";
+  if (/voicemail|voice mail|\bvm\b|left (a )?(detailed )?message/.test(t)) return "voicemail";
   if (/front desk|receptionist|operator|gatekeeper|phone tree|directory|automated|would not transfer/.test(t)) return "gatekeeper";
-  if (/no answer|rang out|did not answer|didn't answer/.test(t)) return "no_answer";
-  if (/email/.test(t)) return "emailed";
+  if (/no answer|rang out|did not answer|didn't answer|rang until/.test(t)) return "no_answer";
   return fallback;
 }
 
@@ -81,6 +89,15 @@ export async function importCallSheet(rows: Row[]) {
       personId = person.id;
       if (created) res.peopleAdded++;
     }
+    // Phone numbers, each with where it came from.
+    if (v(r, "Phone")) await addPhone({ companyId: company.id, personId, number: v(r, "Phone")!, kind: /mobile/i.test(v(r, "Phone Type") ?? "") ? "mobile" : "direct", source: "apollo" });
+    if (v(r, "Company Phone")) await addPhone({ companyId: company.id, number: v(r, "Company Phone")!, kind: "company_main", label: "Company phone", source: "apollo" });
+    for (const line of (v(r, "Alt Company Phones") ?? "").split("\n")) {
+      // Each line reads: number | what it is | where it was found
+      const [num, what, where] = line.split("|").map((x) => x.trim());
+      if (num) await addPhone({ companyId: company.id, number: num, kind: /office/i.test(what ?? "") ? "company_office" : "unknown", label: what, source: "claude_research", sourceDetail: where });
+    }
+
     const sourceStatus = v(r, "Call Status") ?? "Not Started";
     const status = CALL_STATUS_MAP[sourceStatus.toLowerCase()] ?? "attempting";
     const lastContactAt = parseDate(v(r, "Last Contact Date"));
@@ -95,18 +112,34 @@ export async function importCallSheet(rows: Row[]) {
     const [existing] = await db.select().from(s.callQueue).where(eq(s.callQueue.sourceKey, sourceKey));
     if (existing && sameRow(existing.raw, r)) { res.unchanged++; continue; }
     // A row that changed in the sheet refreshes the working columns. While the team still works in the sheet, the sheet wins.
+    let queueId = existing?.id;
     if (existing) { await db.update(s.callQueue).set(fields).where(eq(s.callQueue.id, existing.id)); res.updated++; }
-    else { await db.insert(s.callQueue).values({ ...fields, sourceKey, ownerId: vendor?.id, addedBy: "Call sheet import" }); res.added++; }
+    else { queueId = (await db.insert(s.callQueue).values({ ...fields, sourceKey, ownerId: vendor?.id, addedBy: "Call sheet import" }).returning())[0].id; res.added++; }
     if (status === "do_not_contact") await db.update(s.companies).set({ status: "do_not_contact" }).where(eq(s.companies.id, company.id));
 
-    // Turn the notes into logged calls, so KPIs and bad-number warnings have history. Entries already logged are skipped.
-    const fallback = { new: "other", attempting: "no_answer", connected: "connected", meeting_booked: "meeting_booked", needs_info: "other", dead: "dead_number", do_not_contact: "do_not_contact" }[status];
+    // Turn the notes into call-log rows, each tied to the number that was dialed. Entries already logged are skipped.
+    const fallback: s.CallOutcome | "other" = status === "connected" ? "connected" : status === "meeting_booked" ? "meeting_booked" : status === "do_not_contact" ? "do_not_contact" : status === "attempting" ? "no_answer" : "other";
     const entries = splitDfcNotes(v(r, "DFC Notes") ?? "", (lastContactAt ?? new Date()).getFullYear());
     if (entries.length === 0 && lastContactAt) entries.push({ date: lastContactAt, text: `${sourceStatus} (from call sheet, no note)` });
     for (const e of entries) {
-      const [seen] = await db.select({ id: s.activities.id }).from(s.activities).where(and(eq(s.activities.companyId, company.id), eq(s.activities.notes, e.text))).limit(1);
+      if (/^(emailed|e-?mail sent|sent (an )?e-?mail)/i.test(e.text)) {
+        const [seen] = await db.select({ id: s.activities.id }).from(s.activities).where(and(eq(s.activities.companyId, company.id), eq(s.activities.notes, e.text))).limit(1);
+        if (!seen) await db.insert(s.activities).values({ type: "email", outcome: "sent", companyId: company.id, personId, userId: vendor?.id, notes: e.text, occurredAt: e.date });
+        continue;
+      }
+      const [seen] = await db.select({ id: s.callLog.id }).from(s.callLog).where(and(eq(s.callLog.companyId, company.id), eq(s.callLog.notes, e.text))).limit(1);
       if (seen) continue;
-      await db.insert(s.activities).values({ type: /^emailed|email sent/i.test(e.text) ? "email" : "call", outcome: outcomeFromNote(e.text, fallback), companyId: company.id, personId, userId: vendor?.id, notes: e.text, occurredAt: e.date });
+      // The note usually names the number dialed. Match it to a known number, or record it as a new one from the sheet.
+      const said = extractPhones(e.text)[0];
+      let phoneId: number | undefined;
+      if (said) {
+        const [known] = await db.select().from(s.phoneNumbers).where(and(eq(s.phoneNumbers.companyId, company.id), eq(s.phoneNumbers.digits, phoneDigits(said)))).limit(1);
+        phoneId = known?.id ?? (await addPhone({ companyId: company.id, number: said, source: "call_sheet", label: "Dialed by the caller" }))?.phone.id;
+      }
+      const outcome = outcomeFromNote(e.text, fallback);
+      await db.insert(s.callLog).values({ callQueueId: queueId, companyId: company.id, personId, phoneNumberId: phoneId, userId: vendor?.id, outcome, notes: e.text, source: "call_sheet", calledAt: e.date });
+      const learned = phoneStatusAfter(outcome);
+      if (phoneId && learned) await db.update(s.phoneNumbers).set({ status: learned }).where(eq(s.phoneNumbers.id, phoneId));
       res.callsLogged++;
     }
   }
@@ -117,13 +150,17 @@ export async function importCallSheet(rows: Row[]) {
 
 export async function importHiringPosts(rows: Row[]) {
   const db = await getDb();
-  const res = { rows: rows.length, added: 0, alreadyThere: 0, skipped: 0, companiesAdded: 0, peopleAdded: 0, markedExcluded: 0 };
+  const res = { rows: rows.length, added: 0, alreadyThere: 0, skipped: 0, companiesAdded: 0, peopleAdded: 0, staffingDropped: 0, dismissedNonUs: 0 };
   for (const r of rows) {
     const postId = v(r, "Post ID") ?? v(r, "Post Link")?.match(/activity-(\d+)/)?.[1];
     if (!postId) { res.skipped++; continue; }
     const [dupe] = await db.select({ id: s.signals.id }).from(s.signals).where(eq(s.signals.externalId, postId));
     if (dupe) { res.alreadyThere++; continue; }
     const category = v(r, "Category"), notes = v(r, "Notes"), poster = v(r, "Poster Name"), companyName = v(r, "Company");
+    // Staffing firms go to the archive, not the inbox.
+    const markedStaffing = /staffing\s*-\s*exclude/i.test(`${category} ${notes}`);
+    if (companyName && markedStaffing) await addStaffingFirm({ name: companyName, domain: v(r, "Company Website"), status: "confirmed", source: "LinkedIn hiring posts", note: "Marked Staffing - exclude in the posts sheet" });
+    if (markedStaffing || (companyName && (await checkStaffing(companyName, "LinkedIn hiring posts")))) { res.staffingDropped++; continue; }
     let companyId: number | undefined, personId: number | undefined;
     if (companyName) {
       const { company, created } = await upsertCompany({ name: companyName, website: v(r, "Company Website"), domain: v(r, "Company Website"), apolloId: v(r, "Apollo Company ID") });
@@ -139,8 +176,8 @@ export async function importHiringPosts(rows: Row[]) {
       personId = person.id;
       if (created) res.peopleAdded++;
     }
-    const excluded = /staffing\s*-\s*exclude/i.test(`${category} ${notes}`) || v(r, "US?") === "No";
-    if (excluded) res.markedExcluded++;
+    const excluded = v(r, "US?") === "No";
+    if (excluded) res.dismissedNonUs++;
     const leader = category === "New data leader";
     const what = v(r, "Role(s)") ?? v(r, "Summary") ?? "data roles";
     await db.insert(s.signals).values({
@@ -157,23 +194,21 @@ export async function importHiringPosts(rows: Row[]) {
 
 // ---------- LinkedIn job alert emails ----------
 
-const STAFFING_HINT = /staffing|recruit|talent|workforce|headhunt|\bjobs?\b|\bhire[sd]?\b|hiring|hunter|search (group|partners)|consulting|solutions|resourc|placement|careers|joblet|superworq|remotehunter|ladders|swooped|torentify|talenthop|globaljobfeed|recruiterforge|franklin fitch|taskverse|jobot|dice|lensa|crossover|turing|toptal|insight global|robert half|teksystems|randstad|adecco|kforce|motion recruitment|harnham/i;
-
 export async function importJobAlerts(rows: Row[]) {
   const db = await getDb();
-  const res = { rows: rows.length, added: 0, alreadyThere: 0, skipped: 0, matchedToAccounts: 0, flaggedStaffing: 0 };
+  const res = { rows: rows.length, added: 0, alreadyThere: 0, skipped: 0, matchedToAccounts: 0, staffingDropped: 0 };
   for (const r of rows) {
     const jobId = v(r, "jobId") ?? v(r, "url")?.match(/jobs\/view\/(\d+)/)?.[1], title = v(r, "title"), companyName = v(r, "company");
     if (!jobId || !title || !companyName) { res.skipped++; continue; }
     const [dupe] = await db.select({ id: s.jobPostings.id }).from(s.jobPostings).where(eq(s.jobPostings.externalId, jobId));
     if (dupe) { res.alreadyThere++; continue; }
     const [match] = await db.select({ id: s.companies.id }).from(s.companies).where(sql`lower(${s.companies.name}) = ${companyName.toLowerCase()}`).limit(1);
-    const likelyStaffing = !match && STAFFING_HINT.test(companyName);
+    // Staffing firms and job boards re-post other companies' jobs. Drop them; the archive keeps count.
+    if (!match && (await checkStaffing(companyName, "LinkedIn job alerts"))) { res.staffingDropped++; continue; }
     if (match) res.matchedToAccounts++;
-    if (likelyStaffing) res.flaggedStaffing++;
     await db.insert(s.jobPostings).values({
       externalId: jobId, title, companyName, companyId: match?.id, location: v(r, "location"), workplace: v(r, "workplace"), salary: v(r, "salary"), url: v(r, "url") ?? `https://www.linkedin.com/jobs/view/${jobId}`,
-      alertKind: v(r, "alertKind"), alertSubject: v(r, "alertSubject"), emailThreadId: v(r, "emailThreadId"), likelyStaffing, receivedAt: parseDate(v(r, "receivedAt")) ?? new Date(),
+      alertKind: v(r, "alertKind"), alertSubject: v(r, "alertSubject"), emailThreadId: v(r, "emailThreadId"), receivedAt: parseDate(v(r, "receivedAt")) ?? new Date(),
     });
     res.added++;
   }
@@ -201,10 +236,10 @@ export function parseJobAlertEmail(body: string, meta: { subject?: string; threa
   return jobs;
 }
 
-export async function listJobPostings(opts: { status?: s.JobPostingStatus; hideStaffing?: boolean } = {}) {
+export async function listJobPostings(opts: { status?: s.JobPostingStatus } = {}) {
   const db = await getDb();
   return db.select({ job: s.jobPostings, company: s.companies }).from(s.jobPostings).leftJoin(s.companies, eq(s.jobPostings.companyId, s.companies.id))
-    .where(and(opts.status ? eq(s.jobPostings.status, opts.status) : undefined, opts.hideStaffing ? eq(s.jobPostings.likelyStaffing, false) : undefined))
+    .where(opts.status ? eq(s.jobPostings.status, opts.status) : undefined)
     .orderBy(sql`${s.jobPostings.companyId} is null`, sql`${s.jobPostings.receivedAt} desc`).limit(300);
 }
 
@@ -271,4 +306,17 @@ export async function importLinkedInConnections(csv: string) {
     if (res.names.length < 10) res.names.push(person.name);
   }
   return res;
+}
+
+/** After a firm is confirmed as staffing, remove what it already put in the app's inboxes. */
+export async function purgeStaffing() {
+  const db = await getDb();
+  const firms = (await db.select().from(s.staffingFirms)).filter((f) => f.status !== "not_staffing");
+  const keys = new Set(firms.map((f) => f.nameKey));
+  const { staffingKey } = await import("./staffing");
+  let jobs = 0;
+  for (const j of await db.select({ id: s.jobPostings.id, name: s.jobPostings.companyName, companyId: s.jobPostings.companyId }).from(s.jobPostings)) {
+    if (!j.companyId && keys.has(staffingKey(j.name))) { await db.delete(s.jobPostings).where(eq(s.jobPostings.id, j.id)); jobs++; }
+  }
+  return { jobsRemoved: jobs };
 }

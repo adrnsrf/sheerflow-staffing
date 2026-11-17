@@ -1,4 +1,5 @@
 ---
+kind: routine
 name: Apollo credit check
 schedule: Mondays, and before any paid Apollo step
 summary: Read the Apollo balance and record it, so Budgets shows what is left and what the reserve allows.

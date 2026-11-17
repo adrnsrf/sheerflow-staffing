@@ -7,9 +7,10 @@ import fs from "node:fs";
 import path from "node:path";
 import * as core from "@/core";
 import * as imports from "@/core/imports";
-import { queueRoutineRun } from "@/core/routines";
+import * as context from "@/core/context";
+import * as staffing from "@/core/staffing";
 import { IMPORTS_DIR } from "@/db/client";
-import type { CallOutcome, CandidateStage, ConnectionStatus, JobPostingStatus, SignalStatus } from "@/db/schema";
+import type { CallOutcome, CandidateStage, ConnectionStatus, ContextKind, JobPostingStatus, SignalStatus, StaffingStatus } from "@/db/schema";
 
 // Server actions: what the buttons call. Each one is a thin wrapper around src/core.
 const num = (f: FormData, k: string) => Number(f.get(k));
@@ -17,7 +18,7 @@ const str = (f: FormData, k: string) => (f.get(k) as string | null)?.trim() || u
 const done = () => revalidatePath("/", "layout");
 
 export async function signalAction(f: FormData) { await core.setSignalStatus(num(f, "id"), f.get("status") as SignalStatus); done(); }
-export async function logCallAction(f: FormData) { await core.logCall({ queueId: num(f, "queueId"), outcome: f.get("outcome") as CallOutcome, notes: str(f, "notes") }); done(); }
+export async function logCallAction(f: FormData) { await core.logCall({ queueId: num(f, "queueId"), outcome: f.get("outcome") as CallOutcome, phoneNumberId: num(f, "phoneNumberId") || undefined, notes: str(f, "notes") }); done(); }
 export async function addToCallListAction(f: FormData) { await core.addToCallList(num(f, "companyId"), { addedBy: "Account page" }); done(); }
 export async function queueConnectionAction(f: FormData) { await core.queueConnection(num(f, "personId")); done(); }
 export async function saveNoteAction(f: FormData) { await core.saveConnectionNote(num(f, "personId"), str(f, "note") ?? ""); done(); }
@@ -52,7 +53,32 @@ export async function jobPostingAction(f: FormData) {
   if (f.get("status") === "promote") await imports.promoteJobPosting(num(f, "id")); else await imports.setJobPostingStatus(num(f, "id"), f.get("status") as JobPostingStatus);
   done();
 }
-export async function queueRoutineAction(f: FormData) { await queueRoutineRun(str(f, "id") ?? ""); done(); }
+export async function queueRoutineAction(f: FormData) { await context.queueRoutineRun(str(f, "id") ?? ""); done(); }
+
+// AI context store
+export async function saveContextAction(f: FormData) {
+  let target: string;
+  try {
+    const slug = await context.saveContext({ slug: str(f, "slug"), kind: (str(f, "kind") ?? "skill") as ContextKind, title: str(f, "title") ?? "", summary: str(f, "summary"), schedule: str(f, "schedule"), body: str(f, "body") ?? "" });
+    target = `/system/context/${slug}?saved=1`;
+  } catch (e) { target = `/system/context?error=${encodeURIComponent(e instanceof Error ? e.message : String(e))}`; }
+  done();
+  redirect(target);
+}
+export async function resetContextAction(f: FormData) { await context.resetContext(str(f, "slug") ?? ""); done(); redirect(`/system/context/${str(f, "slug")}?saved=reset`); }
+export async function deleteContextAction(f: FormData) { await context.deleteContext(str(f, "slug") ?? ""); done(); redirect("/system/context"); }
+
+// Staffing archive
+export async function staffingStatusAction(f: FormData) {
+  await staffing.setStaffingStatus(num(f, "id"), f.get("status") as StaffingStatus);
+  if (f.get("status") !== "not_staffing") await imports.purgeStaffing();
+  done();
+}
+export async function addStaffingAction(f: FormData) {
+  const name = str(f, "name");
+  if (name) { await staffing.addStaffingFirm({ name, status: "confirmed", source: "Added by hand", note: str(f, "note") }); await imports.purgeStaffing(); }
+  done();
+}
 
 const IMPORTERS = { "call-list": imports.importCallSheet, "hiring-posts": imports.importHiringPosts, "job-alerts": imports.importJobAlerts } as const;
 export type ImportKind = keyof typeof IMPORTERS;
