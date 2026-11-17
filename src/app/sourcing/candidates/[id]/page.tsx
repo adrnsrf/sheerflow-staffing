@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { addSourceAction, compileCandidateAction, saveProfileAction } from "@/app/actions";
+import { addSourceAction, compileCandidateAction, savePersonalityAction, saveProfileAction } from "@/app/actions";
+import { PersonalityScales } from "@/components/candidate";
 import { Act, Badge, PageHeader } from "@/components/ui";
-import { SIZE_LABEL, SOURCES, SOURCE_LABEL } from "@/core/candidate-schema";
+import { DIMENSIONS, SIZE_LABEL, SOURCES, SOURCE_LABEL, describeDimension, personalityOf } from "@/core/candidate-schema";
 import { getCandidate } from "@/core/candidates";
 import { rolesForCandidate } from "@/core/matching";
 import { fmtDate, label } from "@/lib/format";
@@ -16,6 +17,7 @@ export default async function Candidate({ params, searchParams }: { params: Prom
   const { person, profile: p, sources, check } = c;
   const [roles, q] = await Promise.all([rolesForCandidate(id), searchParams]);
   const uncompiled = sources.filter((s) => !s.compiledAt).length;
+  const pers = personalityOf(p), known = Object.keys(pers.dimensions).length;
   return (
     <>
       <div className="muted mb-2 text-xs"><Link href="/sourcing/candidates" className="hover:underline">Candidates</Link> / {person.name}</div>
@@ -25,7 +27,7 @@ export default async function Candidate({ params, searchParams }: { params: Prom
         {person.linkedinUrl && <a href={person.linkedinUrl} target="_blank" rel="noreferrer" className="btn">LinkedIn</a>}
       </PageHeader>
       {q.error && <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{q.error}</div>}
-      {q.saved && <div className="mb-4 rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-900">{q.saved === "source" ? "Saved, and a job is queued for Claude to work it into the profile." : "Profile saved. Search and matching now use this version."}</div>}
+      {q.saved && <div className="mb-4 rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-900">{q.saved === "source" ? "Saved, and a job is queued for Claude to work it into the profile." : q.saved === "personality" ? "Personality saved. Matches that care about style now use it." : "Profile saved. Search and matching now use this version."}</div>}
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
           {p.summary && <section className="card p-4 text-sm leading-relaxed">{p.summary}</section>}
@@ -54,10 +56,16 @@ export default async function Candidate({ params, searchParams }: { params: Prom
               </div>
             ))}
           </section>
-          <section className="card p-4 text-sm">
-            <h2 className="mb-2 text-sm font-semibold">How they work and what they want</h2>
-            {p.workStyle.traits.length + p.workStyle.motivators.length === 0 ? <p className="muted">Not known yet. This comes from a screen call or messages.</p> : (
-              <div className="space-y-2">
+          <section id="personality" className="card p-4 text-sm">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-sm font-semibold">Personality and work style</h2>
+              <span className="muted text-xs">{known} of {DIMENSIONS.length} scales known</span>
+            </div>
+            <PersonalityScales personality={pers} />
+            {pers.interests.length > 0 && <div className="mt-4"><span className="muted text-xs">Interests they brought up: </span>{pers.interests.map((x) => <Badge key={x}>{x}</Badge>)}</div>}
+            {pers.notes && <p className="mt-2"><span className="muted text-xs">Notes: </span>{pers.notes}</p>}
+            {(p.workStyle.traits.length > 0 || p.workStyle.motivators.length > 0) && (
+              <div className="mt-4 space-y-1.5 border-t border-stone-100 pt-3">
                 {p.workStyle.traits.map((t, i) => <div key={i}><span className="font-medium">{t.trait}.</span>{t.evidence && <span className="muted"> {t.evidence}{t.source && ` (${SOURCE_LABEL[t.source].toLowerCase()})`}.</span>}</div>)}
                 {p.workStyle.motivators.length > 0 && <div><span className="muted">Wants: </span>{p.workStyle.motivators.join("; ")}</div>}
                 {p.workStyle.concerns.length > 0 && <div><span className="muted">Wants to avoid: </span>{p.workStyle.concerns.join("; ")}</div>}
@@ -65,6 +73,30 @@ export default async function Candidate({ params, searchParams }: { params: Prom
                 {p.workStyle.communication && <div><span className="muted">Communication: </span>{p.workStyle.communication}</div>}
               </div>
             )}
+            <details className="mt-4 border-t border-stone-100 pt-3">
+              <summary className="cursor-pointer text-xs font-medium text-brand">Fill in or change by hand</summary>
+              <form action={savePersonalityAction} className="mt-3 space-y-2">
+                <input type="hidden" name="personId" value={id} />
+                {DIMENSIONS.map((d) => {
+                  const dim = pers.dimensions[d.key];
+                  return (
+                    <div key={d.key} className="grid items-center gap-2 sm:grid-cols-12">
+                      <span className="text-xs font-medium sm:col-span-2">{d.label}</span>
+                      <select name={`v_${d.key}`} defaultValue={dim?.value ?? ""} className="field py-1 text-xs sm:col-span-4">
+                        <option value="">Not known</option>
+                        {[1, 2, 3, 4, 5].map((v) => <option key={v} value={v}>{v} · {describeDimension(d.key, v)}</option>)}
+                      </select>
+                      <input name={`e_${d.key}`} defaultValue={dim?.evidence ?? ""} placeholder="What makes you say so?" className="field py-1 text-xs sm:col-span-4" />
+                      <select name={`c_${d.key}`} defaultValue={dim?.confidence ?? "inferred"} className="field py-1 text-xs sm:col-span-2"><option value="inferred">My reading</option><option value="stated">Their words</option></select>
+                      <input type="hidden" name={`s_${d.key}`} value={dim?.source ?? "recruiter_note"} />
+                    </div>
+                  );
+                })}
+                <input name="interests" defaultValue={pers.interests.join(", ")} placeholder="Interests they brought up, separated by commas" className="field w-full py-1 text-xs" />
+                <input name="notes" defaultValue={pers.notes ?? ""} placeholder="Anything else about how they come across" className="field w-full py-1 text-xs" />
+                <button className="btn btn-primary">Save personality</button>
+              </form>
+            </details>
           </section>
           {p.screening?.summary && (
             <section className="card p-4 text-sm">

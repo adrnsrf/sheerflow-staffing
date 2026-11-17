@@ -15,7 +15,7 @@
 import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import * as s from "@/db/schema";
-import { COMPANY_SIZES, canonTool, toolsIn, toolYears, type Profile } from "./candidate-schema";
+import { COMPANY_SIZES, DIMENSIONS, canonTool, personalityOf, toolsIn, toolYears, type DimensionKey, type Profile } from "./candidate-schema";
 import { candidatesReady } from "./candidates";
 import { embed, toVector } from "./embeddings";
 
@@ -26,9 +26,23 @@ export type Requirements = {
   workplace?: "remote" | "hybrid" | "onsite";
   city?: string; state?: string;
   maxBase?: number;
+  /** The kind of person the team wants, on the same 1 to 5 scales as a candidate's personality. Leave a scale out for "no preference". */
+  style?: Partial<Record<DimensionKey, number>>;
 };
 
-export const WEIGHTS = { structured: 0.65, similarity: 0.35, tools: 0.55, experience: 0.15, companySize: 0.1, location: 0.1, pay: 0.1 };
+/** `style` only counts when both the role and the candidate have something on a scale, so thin profiles are not punished. */
+export const WEIGHTS = { structured: 0.65, similarity: 0.35, tools: 0.55, experience: 0.15, companySize: 0.1, location: 0.1, pay: 0.1, style: 0.2 };
+
+/** Style hints a job description gives away. A starting point; set the scales on the role page. */
+function styleFrom(lower: string, size: Requirements["companySize"]): Requirements["style"] {
+  const st: NonNullable<Requirements["style"]> = {};
+  if (/first data hire|founding|wear many hats|build .* from (nothing|scratch)|nobody will hand you/.test(lower) || size === "startup") { st.scope = 1; st.structure = 1; st.teamwork = 2; }
+  else if (/mature (review|practices)|on-?call practices|well-defined|established (team|process)/.test(lower) || size === "enterprise") { st.scope = 4; st.structure = 4; }
+  if (/you will lead|lead (a team|\w+ engineers)|manage a team|managing engineers|experience leading/.test(lower)) st.leadership = 5;
+  if (/business users|stakeholders|executives|non-technical|clinical leaders|branch managers/.test(lower)) st.audience = 4;
+  if (/fast-?paced|move fast|high-?growth|ship it/.test(lower)) st.pace = 4;
+  return Object.keys(st).length ? st : undefined;
+}
 
 /**
  * A first reading of a job description: which known tools it names, how many years it asks
@@ -58,7 +72,7 @@ export function extractRequirements(text: string): Requirements {
   return {
     tools, minTotalYears: total ? Number(total[1]) : undefined, companySize: size,
     workplace: /fully remote|remote[- ]first|\bremote\b/.test(lower) && !/not remote|no remote/.test(lower) ? "remote" : /hybrid/.test(lower) ? "hybrid" : /on-?site|in office/.test(lower) ? "onsite" : undefined,
-    city: place?.[1]?.trim(), state: place?.[2], maxBase: pay.length ? Math.max(...pay) : undefined,
+    city: place?.[1]?.trim(), state: place?.[2], maxBase: pay.length ? Math.max(...pay) : undefined, style: styleFrom(lower, size),
   };
 }
 
@@ -115,9 +129,22 @@ export function scoreStructured(p: Profile, req: Requirements) {
   }
   parts.push({ label: "Pay", score: pay, note: payNote });
 
+  // Style: compare the scales the role cares about with what we know of the person.
+  const wanted = Object.entries(req.style ?? {}) as [DimensionKey, number][];
+  const known = personalityOf(p).dimensions;
+  const compared = wanted.filter(([k]) => known[k]).map(([k, want]) => ({ k, fit: 1 - Math.abs(known[k]!.value - want) / 4, label: DIMENSIONS.find((d) => d.key === k)!.label.toLowerCase() }));
+  const style = compared.length ? compared.reduce((n, c) => n + c.fit, 0) / compared.length : null;
+  if (wanted.length) {
+    const fits = compared.filter((c) => c.fit >= 0.75).map((c) => c.label), differs = compared.filter((c) => c.fit < 0.5).map((c) => c.label);
+    parts.push({ label: "Style", score: style ?? 0.5, note: compared.length === 0 ? `Not enough known about them yet (role cares about ${wanted.length} trait${wanted.length > 1 ? "s" : ""})`
+      : `${fits.length} of ${compared.length} known traits line up${fits.length ? ` (${fits.join(", ")})` : ""}${differs.length ? `; differs on ${differs.join(", ")}` : ""}${compared.length < wanted.length ? `; ${wanted.length - compared.length} not known` : ""}` });
+  }
+
   const w = WEIGHTS;
-  const structured = w.tools * toolScore + w.experience * exp + w.companySize * size + w.location * loc + w.pay * pay;
-  return { structured, tools, missingMust, parts };
+  // Style counts in proportion to how much of it could be compared, so an unknown is neither a plus nor a minus.
+  const styleWeight = style == null ? 0 : w.style * (compared.length / wanted.length);
+  const structured = (w.tools * toolScore + w.experience * exp + w.companySize * size + w.location * loc + w.pay * pay + styleWeight * (style ?? 0)) / (1 + styleWeight);
+  return { structured, tools, missingMust, parts, style };
 }
 
 type Row = { person_id: number; name: string; profile: Profile; sim: number };
@@ -212,6 +239,10 @@ export async function embedRole(searchId: number) {
   const [vec] = await embed([roleText(role)]);
   await db.update(s.searches).set({ embedding: vec }).where(eq(s.searches.id, searchId));
   return vec;
+}
+
+export async function getRole(searchId: number) {
+  return (await (await getDb()).select().from(s.searches).where(eq(s.searches.id, searchId)))[0] ?? null;
 }
 
 /** Create or update a role. Requirements are read from the description unless given. */

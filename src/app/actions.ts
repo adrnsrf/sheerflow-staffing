@@ -9,7 +9,8 @@ import * as core from "@/core";
 import * as imports from "@/core/imports";
 import * as candidates from "@/core/candidates";
 import * as context from "@/core/context";
-import { saveRole } from "@/core/matching";
+import { DIMENSIONS, type Source } from "@/core/candidate-schema";
+import { getRole, saveRole } from "@/core/matching";
 import * as signals from "@/core/signals";
 import * as staffing from "@/core/staffing";
 import { IMPORTS_DIR } from "@/db/client";
@@ -153,6 +154,31 @@ export async function saveProfileAction(f: FormData) {
   catch (e) { target = back(`/sourcing/candidates/${id}`, e); }
   done();
   redirect(target);
+}
+/** Save the personality form: one optional value and note per scale, plus interests. */
+export async function savePersonalityAction(f: FormData) {
+  const id = num(f, "personId");
+  let target = `/sourcing/candidates/${id}?saved=personality#personality`;
+  try {
+    const dimensions = Object.fromEntries(DIMENSIONS.map((d) => {
+      const value = num(f, `v_${d.key}`);
+      return [d.key, value >= 1 && value <= 5 ? { value, evidence: str(f, `e_${d.key}`), source: (str(f, `s_${d.key}`) ?? "recruiter_note") as Source, confidence: (str(f, `c_${d.key}`) ?? "stated") as "stated" | "inferred" } : null];
+    }));
+    await candidates.updatePersonality(id, { dimensions, interests: (str(f, "interests") ?? "").split(",").map((x) => x.trim()).filter(Boolean), notes: str(f, "notes") ?? "" });
+  } catch (e) { target = back(`/sourcing/candidates/${id}`, e); }
+  done();
+  redirect(target);
+}
+/** Save the team style a role wants: a value per scale, or blank for no preference. */
+export async function saveRoleStyleAction(f: FormData) {
+  const id = num(f, "id");
+  const role = await getRole(id);
+  if (role) {
+    const style = Object.fromEntries(DIMENSIONS.map((d) => [d.key, num(f, `v_${d.key}`)]).filter(([, v]) => (v as number) >= 1 && (v as number) <= 5));
+    await saveRole({ id, title: role.title, clientName: role.clientName ?? undefined, companyId: role.companyId ?? undefined, description: role.description ?? "", requirements: { ...(role.requirements ?? { tools: [] }), style: Object.keys(style).length ? style : undefined } });
+  }
+  done();
+  redirect(`/sourcing/searches/${id}`);
 }
 export async function addToSearchAction(f: FormData) { await candidates.addToSearch(num(f, "searchId"), num(f, "personId"), num(f, "fitScore") || undefined, str(f, "fitNotes")); done(); }
 export async function clearSamplesAction() { await candidates.clearSampleCandidates(); done(); }

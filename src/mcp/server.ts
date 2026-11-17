@@ -80,6 +80,12 @@ export function buildMcpServer() {
   server.registerTool("save_candidate_profile", { description: "Save a candidate's compiled profile (the whole structured document; see the compiling-candidate-profiles skill for the shape). Replaces the previous profile, marks the candidate's sources as compiled, and rebuilds the search vector. Rejected if it does not fit the schema.", inputSchema: { person_id: z.number(), profile: z.record(z.string(), z.unknown()) } },
     safe(async (a) => candidates.saveCandidateProfile(a.person_id, a.profile, { markSourcesCompiled: true })));
 
+  const scale = z.object({ value: z.number().min(1).max(5), evidence: z.string().optional(), source: z.enum(["linkedin", "resume", "application", "screen_call", "conversation", "recruiter_note"]).optional(), confidence: z.enum(["stated", "inferred"]).optional() }).nullable();
+  server.registerTool("update_candidate_personality", {
+    description: "Set some of a candidate's personality scales (1 to 5; see the compiling-candidate-profiles skill for what each end means) without rewriting the rest of the profile. Give evidence for each. Pass null to clear a scale. Only set what a source actually supports.",
+    inputSchema: { person_id: z.number(), dimensions: z.object({ scope: scale, structure: scale, pace: scale, demeanor: scale, confidence: scale, teamwork: scale, audience: scale, leadership: scale }).partial().optional(), interests: z.array(z.string()).optional(), notes: z.string().optional() },
+  }, safe(async (a) => candidates.updatePersonality(a.person_id, { dimensions: a.dimensions, interests: a.interests, notes: a.notes })));
+
   server.registerTool("list_roles", { description: "The open roles being filled, each with its requirements.", annotations: read },
     safe(async () => { await candidates.candidatesReady(); return (await core.listSearches()).map((r) => ({ id: r.search.id, title: r.search.title, client: r.client, status: r.search.status, requirements: r.search.requirements, pipeline: r.stages })); }));
 

@@ -235,6 +235,17 @@ and which intake step usually supplies it.
 | Work style, what they want and want to avoid | Screen call (Retell AI or you), messages | Medium; evidence is recorded |
 | Company sizes worked in | Worked out from employers | Medium |
 
+**Personality.** Each profile has eight scales from 1 to 5: breadth (jack of all trades to
+deep specialist), structure (thrives in ambiguity to wants clear process), pace (laid back to
+driven), demeanor (light to serious), confidence (reserved to assertive), working style
+(independent to collaborative), audience (best with engineers to best with business people) and
+leadership (hands-on to leads people), plus interests and notes. A scale is filled in by hand on
+the candidate page or by a Claude run after a screen call, always with what it is based on and
+whether it is their words or our reading. Most profiles will have a few scales, not all eight.
+A role can say the kind of person the team wants on the same scales. Style then joins the
+requirements score, weighted by how much could be compared: a scale nobody has filled in
+neither helps nor hurts. Interests are for rapport and never scored.
+
 **Roles.** A role holds its job description and its requirements in scoreable form: tools with
 minimum years and must/nice, total years, company size, workplace and city, top of the pay band.
 Requirements are read from the pasted description and can be edited.

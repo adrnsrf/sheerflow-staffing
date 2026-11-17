@@ -8,7 +8,7 @@
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import * as s from "@/db/schema";
-import { completeness, profileChunks, profileSchema, profileText, type Profile } from "./candidate-schema";
+import { completeness, personalityOf, profileChunks, profileSchema, profileText, type DimensionKey, type Personality, type Profile, type Source } from "./candidate-schema";
 import { embed } from "./embeddings";
 import { queueJob, upsertPerson } from "./index";
 
@@ -61,6 +61,21 @@ export async function saveCandidateProfile(personId: number, input: unknown, opt
   }).where(eq(s.people.id, personId));
   if (opts.markSourcesCompiled) await db.update(s.candidateSources).set({ compiledAt: new Date() }).where(and(eq(s.candidateSources.personId, personId), isNull(s.candidateSources.compiledAt)));
   return { personId, completeness: completeness(profile) };
+}
+
+/**
+ * Change part of a candidate's personality without touching the rest of the profile.
+ * A scale set to null is cleared. Used by the form on the candidate page and by Claude after a screen call.
+ */
+export async function updatePersonality(personId: number, input: { dimensions?: Partial<Record<DimensionKey, { value: number; evidence?: string; source?: Source; confidence?: "stated" | "inferred" } | null>>; interests?: string[]; notes?: string }) {
+  const db = await getDb();
+  const [row] = await db.select().from(s.candidateProfiles).where(eq(s.candidateProfiles.personId, personId));
+  if (!row) throw new Error(`No candidate with id ${personId}`);
+  const current = personalityOf(row.profile);
+  const dimensions: Personality["dimensions"] = { ...current.dimensions };
+  for (const [key, val] of Object.entries(input.dimensions ?? {}) as [DimensionKey, { value: number } | null][]) { if (val == null) delete dimensions[key]; else dimensions[key] = val; }
+  const personality: Personality = { dimensions, interests: input.interests ?? current.interests, notes: input.notes ?? current.notes };
+  return saveCandidateProfile(personId, { ...row.profile, personality }, { isSample: row.isSample });
 }
 
 /** Add a candidate (or find them by LinkedIn URL) with an empty profile, ready for sources. */

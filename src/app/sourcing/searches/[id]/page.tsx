@@ -1,10 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { addToSearchAction, candidateStageAction, queueJobAction, saveRoleAction } from "@/app/actions";
-import { MatchScore, MatchWhy, ToolFit } from "@/components/candidate";
+import { addToSearchAction, candidateStageAction, queueJobAction, saveRoleAction, saveRoleStyleAction } from "@/app/actions";
+import { MatchScore, MatchWhy, PersonalityScales, ToolFit } from "@/components/candidate";
 import { Act, Badge, PageHeader } from "@/components/ui";
 import { getSearch } from "@/core";
-import { SIZE_LABEL } from "@/core/candidate-schema";
+import { DIMENSIONS, SIZE_LABEL, describeDimension } from "@/core/candidate-schema";
 import { matchRole } from "@/core/matching";
 import type { CandidateStage } from "@/db/schema";
 import { label } from "@/lib/format";
@@ -45,6 +45,23 @@ export default async function Role({ params }: { params: Promise<{ id: string }>
               </dl>
             </>
           )}
+          <div className="mt-4 border-t border-stone-100 pt-3">
+            <h3 className="mb-2 text-xs font-semibold">The kind of person the team wants</h3>
+            {Object.keys(req?.style ?? {}).length === 0 ? <p className="muted text-xs">No preference set. Style is left out of the score.</p> : <PersonalityScales personality={{ dimensions: {}, interests: [] }} wanted={req!.style} compact />}
+            <details className="mt-2">
+              <summary className="cursor-pointer text-xs font-medium text-brand">Set the team style</summary>
+              <form action={saveRoleStyleAction} className="mt-2 space-y-1.5">
+                <input type="hidden" name="id" value={search.id} />
+                {DIMENSIONS.map((d) => (
+                  <div key={d.key} className="flex items-center gap-2">
+                    <span className="w-24 shrink-0 text-xs">{d.label}</span>
+                    <select name={`v_${d.key}`} defaultValue={req?.style?.[d.key] ?? ""} className="field flex-1 py-1 text-xs"><option value="">No preference</option>{[1, 2, 3, 4, 5].map((v) => <option key={v} value={v}>{describeDimension(d.key, v)}</option>)}</select>
+                  </div>
+                ))}
+                <button className="btn">Save and rematch</button>
+              </form>
+            </details>
+          </div>
           <details className="mt-3">
             <summary className="cursor-pointer text-xs font-medium text-brand">Edit the description or requirements</summary>
             <form action={saveRoleAction} className="mt-2 space-y-2">
@@ -58,7 +75,7 @@ export default async function Role({ params }: { params: Promise<{ id: string }>
       </div>
 
       <h2 className="mt-8 mb-1 text-sm font-semibold">Best matches</h2>
-      <p className="muted mb-3 max-w-3xl text-xs">Score = 65% requirements (tools at the years asked, experience, company size, location, pay) + 35% similarity (how closely the whole profile reads to this job description). Anyone missing a must-have tool is capped at 55.</p>
+      <p className="muted mb-3 max-w-3xl text-xs">Score = 65% requirements (tools at the years asked, experience, company size, location, pay, and style where it is known) + 35% similarity (how closely the whole profile reads to this job description). Anyone missing a must-have tool is capped at 55.</p>
       <div className="space-y-2">
         {matches.map((m) => (
           <div key={m.personId} className="card flex items-start gap-4 p-4">

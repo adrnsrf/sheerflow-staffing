@@ -21,6 +21,40 @@ const confidence = z.enum(["stated", "inferred"]);
 export const COMPANY_SIZES = ["startup", "small", "mid", "large", "enterprise"] as const;
 export const SIZE_LABEL: Record<(typeof COMPANY_SIZES)[number], string> = { startup: "Startup (under 50)", small: "Small (50 to 200)", mid: "Mid-size (200 to 1,000)", large: "Large (1,000 to 10,000)", enterprise: "Enterprise (10,000+)" };
 
+/**
+ * Personality, as eight scales. Each runs from 1 (the left description) to 5 (the right one);
+ * 3 is in between. Neither end is better: they describe fit, and a role can ask for either.
+ * A scale is only filled in when there is something to base it on, and it says what.
+ */
+export const DIMENSIONS = [
+  { key: "scope", label: "Breadth", low: "Jack of all trades", high: "Deep specialist", ask: "Do you prefer owning a bit of everything, or going deep on one area?" },
+  { key: "structure", label: "Structure", low: "Thrives in ambiguity", high: "Wants clear process", ask: "Tell me about a time nobody told you what to build. How did that feel?" },
+  { key: "pace", label: "Pace", low: "Laid back, steady", high: "Driven, intense", ask: "What does a good week look like for you?" },
+  { key: "demeanor", label: "Demeanor", low: "Light, easygoing", high: "Serious, formal", ask: "Judged from how they talk; no question needed." },
+  { key: "confidence", label: "Confidence", low: "Reserved, understated", high: "Confident, assertive", ask: "Judged from how they describe their own work and push back." },
+  { key: "teamwork", label: "Working style", low: "Independent", high: "Collaborative", ask: "Do you do your best work alone or with others in the room?" },
+  { key: "audience", label: "Audience", low: "Best with engineers", high: "Best with business people", ask: "Who do you spend most of your day talking to, and who do you enjoy most?" },
+  { key: "leadership", label: "Leadership", low: "Hands-on individual", high: "Leads people", ask: "Do you want to manage people, now or later?" },
+] as const;
+export type DimensionKey = (typeof DIMENSIONS)[number]["key"];
+const DIMENSION_KEYS = DIMENSIONS.map((d) => d.key) as [DimensionKey, ...DimensionKey[]];
+/** How a value on a scale reads in words. */
+export function describeDimension(key: DimensionKey, value: number) {
+  const d = DIMENSIONS.find((x) => x.key === key)!;
+  return value <= 1.5 ? d.low : value <= 2.5 ? `Leans ${d.low.toLowerCase()}` : value < 3.5 ? `Between ${d.low.toLowerCase()} and ${d.high.toLowerCase()}` : value < 4.5 ? `Leans ${d.high.toLowerCase()}` : d.high;
+}
+
+const personalitySchema = z.object({
+  dimensions: z.partialRecord(z.enum(DIMENSION_KEYS), z.object({ value: z.number().min(1).max(5), evidence: z.string().optional(), source: z.enum(SOURCES).optional(), confidence: z.enum(["stated", "inferred"]).optional() })).default({}),
+  /** Things they brought up themselves and enjoy talking about. For rapport, never for scoring. */
+  interests: z.array(z.string()).default([]),
+  notes: z.string().optional(),
+});
+export type Personality = z.infer<typeof personalitySchema>;
+const NO_PERSONALITY: Personality = { dimensions: {}, interests: [] };
+/** Profiles saved before this section existed have none; treat that as empty. */
+export const personalityOf = (p: { personality?: Personality }): Personality => p.personality ?? NO_PERSONALITY;
+
 export const profileSchema = z.object({
   headline: z.string().optional(),
   summary: z.string().optional(),
@@ -49,6 +83,8 @@ export const profileSchema = z.object({
     concerns: z.array(z.string()).default([]),
     communication: z.string().optional(),
   }).default({ traits: [], prefersCompanySize: [], motivators: [], concerns: [] }),
+  /** Personality on fixed scales, plus interests. Sparse by design: filled in from screen calls and by hand. */
+  personality: personalitySchema.default(NO_PERSONALITY),
   /** The result of a screen: a Retell AI call or a call with Adrian. */
   screening: z.object({ date: z.string().optional(), by: z.enum(["retell_ai", "recruiter"]).optional(), summary: z.string().optional(), strengths: z.array(z.string()).default([]), risks: z.array(z.string()).default([]) }).optional(),
 });
@@ -110,7 +146,8 @@ export function profileChunks(p: Profile): { kind: "summary" | "tools" | "experi
     if (body) out.push({ kind: "experience", content: `${e.title} at a ${size(e.companySize)} ${e.industry ?? ""} company${e.teamSize ? `, team of ${e.teamSize}` : ""}. ${body}`.replace(/\s+/g, " ") });
   }
   const style = [...p.workStyle.traits.map((t) => `${t.trait}. ${t.evidence ?? ""}`), p.workStyle.motivators.length ? `Wants ${p.workStyle.motivators.join("; ")}.` : "", p.workStyle.concerns.length ? `Wants to avoid ${p.workStyle.concerns.join("; ")}.` : "",
-    p.workStyle.prefersCompanySize.length ? `Prefers ${p.workStyle.prefersCompanySize.map(size).join(" or ")} companies.` : "", p.workStyle.communication ?? "", p.screening?.summary ?? ""].filter(Boolean).join(" ");
+    p.workStyle.prefersCompanySize.length ? `Prefers ${p.workStyle.prefersCompanySize.map(size).join(" or ")} companies.` : "", p.workStyle.communication ?? "", p.screening?.summary ?? "",
+    ...Object.entries(personalityOf(p).dimensions).map(([k, d]) => `${describeDimension(k as DimensionKey, d!.value)}.`), personalityOf(p).interests.length ? `Interests: ${personalityOf(p).interests.join(", ")}.` : ""].filter(Boolean).join(" ");
   if (style) out.push({ kind: "work_style", content: style });
   return out;
 }
@@ -125,11 +162,13 @@ const CHECKS: [string, (p: Profile) => boolean, string, number][] = [
   ["Availability and notice", (p) => !!p.availability.status, "Application form or screen call", 5],
   ["Work authorization", (p) => !!p.workAuthorization, "Application form", 5],
   ["Work style and what they want", (p) => p.workStyle.traits.length > 0 || p.workStyle.motivators.length > 0, "Screen call or messages", 10],
+  ["Personality (at least 4 of the 8 scales)", (p) => Object.keys(personalityOf(p).dimensions).length >= 4, "Screen call, or fill it in by hand after talking to them", 10],
   ["Company size they have worked in", (p) => p.experience.some((e) => !!e.companySize), "Worked out from employers on the resume", 5],
   ["Screen summary", (p) => !!p.screening?.summary, "Retell AI screen call or a call with you", 5],
 ];
 export function completeness(p: Profile) {
   const missing = CHECKS.filter(([, ok]) => !ok(p)).map(([field, , fill]) => ({ field, fill }));
-  const score = CHECKS.filter(([, ok]) => ok(p)).reduce((n, c) => n + c[3], 0);
+  const total = CHECKS.reduce((n, c) => n + c[3], 0);
+  const score = Math.round((100 * CHECKS.filter(([, ok]) => ok(p)).reduce((n, c) => n + c[3], 0)) / total);
   return { score, missing };
 }
