@@ -187,6 +187,15 @@ export function buildMcpServer() {
   server.registerTool("add_phone_number", { description: "Save a researched phone number for a company (or one of its people) with where it was found. Skipped if already on file.", inputSchema: { company_id: z.number(), person_id: z.number().optional(), number: z.string(), label: z.string().optional(), source: z.enum(["apollo", "claude_research"]), source_detail: z.string().optional() } },
     safe(async (a) => (await addPhone({ companyId: a.company_id, personId: a.person_id, number: a.number, label: a.label, source: a.source, sourceDetail: a.source_detail })) ?? Promise.reject(new Error("That does not look like a phone number"))));
 
+  server.registerTool("save_company_brief", { description: "Save the short brief for a company (what they do, their data team, why they might need help hiring, anything to mention on a call). Plain text, one or two short paragraphs. Shown at the top of the company's page.", inputSchema: { company_id: z.number(), brief: z.string() } },
+    safe(async (a) => core.saveCompanyBrief(a.company_id, a.brief)));
+
+  server.registerTool("save_weekly_review", { description: "Save the weekly sales review so it shows on the Numbers screen. Plain text, a few short paragraphs.", inputSchema: { text: z.string() } },
+    safe(async (a) => core.saveWeeklyReview(a.text)));
+
+  server.registerTool("log_reply", { description: "Record that a person replied to outreach (for example a reply found in Gmail), with a one-line summary. Stops follow-up suggestions for someone who already answered. For a candidate, pass the role id and whether they are interested.", inputSchema: { person_id: z.number(), channel: z.enum(["email", "linkedin", "text"]), summary: z.string(), role_id: z.number().optional(), interested: z.boolean().optional() } },
+    safe(async (a) => core.logReply({ personId: a.person_id, channel: a.channel, summary: a.summary, searchId: a.role_id, interested: a.interested })));
+
   server.registerTool("complete_job", { description: "Mark a queued job done (or failed) with a short result summary.", inputSchema: { job_id: z.number(), result: z.string(), failed: z.boolean().default(false) } },
     safe(async (a) => core.completeJob(a.job_id, a.result, a.failed)));
 

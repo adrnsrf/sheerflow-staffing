@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { logCallAction } from "@/app/actions";
 import { CopyButton } from "@/components/client";
+import { AskClaude } from "@/components/ask-claude";
 import { Badge, PageHeader, type Tone } from "@/components/ui";
 import { listCallList, listUsers, usable } from "@/core";
 import { allCompanyHeat } from "@/core/signals";
@@ -9,17 +10,24 @@ import { isDue, label, rel } from "@/lib/format";
 
 // What happened on this dial. The row's status follows from it.
 const OUTCOMES: [CallOutcome, string, string][] = [
-  ["connected", "Connected", "btn btn-primary"], ["meeting_booked", "Meeting booked", "btn btn-primary"], ["email_requested", "Email requested", "btn"], ["voicemail", "Voicemail", "btn"],
-  ["no_answer", "No answer", "btn"], ["gatekeeper", "Gatekeeper", "btn"], ["bad_number", "Bad number", "btn btn-danger"], ["wrong_person", "Wrong person", "btn btn-danger"],
-  ["not_interested", "Not interested", "btn btn-danger"], ["do_not_contact", "Do not contact", "btn btn-danger"],
+  ["connected", "Spoke with them", "btn btn-primary"], ["meeting_booked", "Meeting booked", "btn btn-primary"], ["email_requested", "Asked for an email", "btn"], ["voicemail", "Voicemail", "btn"],
+  ["no_answer", "No answer", "btn"], ["gatekeeper", "Gatekeeper", "btn"],
 ];
+// Outcomes that end or stall the row sit one click away, so they are not pressed by accident.
+const ENDINGS: [CallOutcome, string][] = [["bad_number", "Bad number"], ["wrong_person", "Wrong person"], ["not_interested", "Not interested"], ["do_not_contact", "Do not contact"]];
 const STATUS: Record<CallQueueStatus, [string, Tone]> = {
   new: ["Not started", "teal"], attempting: ["Attempting", "amber"], connected: ["Connected", "green"], meeting_booked: ["Meeting booked", "green"],
-  needs_info: ["Needs info", "violet"], closed: ["Closed", "gray"], do_not_contact: ["Do not contact", "red"],
+  needs_info: ["Needs research", "violet"], closed: ["Closed", "gray"], do_not_contact: ["Do not contact", "red"],
 };
 const FILTERS: CallQueueStatus[] = ["new", "attempting", "connected", "needs_info"];
 const SOURCE: Record<string, string> = { apollo: "Apollo", claude_research: "Claude research", call_sheet: "Call sheet", manual: "Typed in" };
 const PAGE = 40;
+
+/** A call card. It is a form (so the outcome buttons can log a call) only when there is a number to dial. */
+function Card({ log, queueId, children }: { log: boolean; queueId: number; children: React.ReactNode }) {
+  if (!log) return <div className="card p-4">{children}</div>;
+  return <form action={logCallAction} className="card p-4"><input type="hidden" name="queueId" value={queueId} />{children}</form>;
+}
 
 export default async function Calls({ searchParams }: { searchParams: Promise<{ owner?: string; status?: string; all?: string }> }) {
   const sp = await searchParams;
@@ -37,7 +45,7 @@ export default async function Calls({ searchParams }: { searchParams: Promise<{ 
   const href = (p: Record<string, string | number | undefined>) => "/bd/calls?" + new URLSearchParams(Object.entries({ owner, status, ...p }).filter(([, x]) => x != null).map(([k, x]) => [k, String(x)])).toString();
   return (
     <>
-      <PageHeader title="Call list" sub="Hottest first. Pick the number you dialed and press what happened. The call is logged against that number and the row's status follows.">
+      <PageHeader title="Call list" sub="Calls that are due come first, then the strongest companies. Pick the number you dialed and press what happened.">
         <Link href={href({ owner: undefined })} className={`btn ${!owner ? "btn-primary" : ""}`}>Everyone</Link>
         {users.map((u) => <Link key={u.id} href={href({ owner: u.id })} className={`btn ${owner === u.id ? "btn-primary" : ""}`}>{u.name}</Link>)}
       </PageHeader>
@@ -49,8 +57,7 @@ export default async function Calls({ searchParams }: { searchParams: Promise<{ 
         {active.map(({ entry, company, person, owner: who, phones }) => {
           const first = phones.find(usable) ?? phones[0];
           return (
-            <form key={entry.id} action={logCallAction} className="card p-4">
-              <input type="hidden" name="queueId" value={entry.id} />
+            <Card key={entry.id} log={phones.length > 0} queueId={entry.id}>
               <div className="grid gap-4 lg:grid-cols-5">
                 <div className="min-w-0 lg:col-span-3">
                   <div className="flex flex-wrap items-center gap-2">
@@ -61,11 +68,11 @@ export default async function Calls({ searchParams }: { searchParams: Promise<{ 
                   </div>
                   <div className="mt-1 text-sm">{person ? <>{person.name}<span className="muted">, {person.title}</span></> : <span className="muted">No contact yet</span>}</div>
                   {entry.topSignal && <div className="muted mt-0.5 text-xs">Why now: {entry.topSignal}</div>}
-                  <div className="muted mt-0.5 text-xs">{who?.name}{entry.lastContactAt && ` · last contact ${rel(entry.lastContactAt)}`}{entry.batch && ` · batch ${entry.batch}`}{entry.sourceStatus && ` · sheet status: ${entry.sourceStatus}`}</div>
+                  <div className="muted mt-0.5 text-xs">{who?.name}{entry.lastContactAt && ` · last contact ${rel(entry.lastContactAt)}`}</div>
                   {entry.notes && <details className="mt-1 text-xs"><summary className="cursor-pointer text-brand">Notes from the call sheet</summary><div className="mt-1 whitespace-pre-line italic text-stone-600">{entry.notes}</div></details>}
                 </div>
                 <div className="lg:col-span-2">
-                  {phones.length === 0 && <div className="muted text-sm">No phone number on file.</div>}
+                  {phones.length === 0 && <div className="text-sm"><div className="muted mb-1.5">No phone number on file.</div><AskClaude kind="phone_research" title={`Ask Claude to research: ${company.name}`} payload={{ companyId: company.id, personId: person?.id ?? null }}>Ask Claude to find a number</AskClaude></div>}
                   {phones.map((p) => {
                     const dead = !usable(p);
                     const walled = !dead && p.dials >= 3 && p.gatekeeper / p.dials >= 0.5 && p.reached === 0;
@@ -75,7 +82,7 @@ export default async function Calls({ searchParams }: { searchParams: Promise<{ 
                         <span className="min-w-0 flex-1">
                           <span className={`font-semibold tabular-nums ${dead ? "line-through" : "text-brand"}`}>{p.number}</span>{" "}
                           {p.status === "bad" && <Badge tone="red">Bad number</Badge>}{p.status === "do_not_call" && <Badge tone="red">Do not call</Badge>}{p.status === "good" && <Badge tone="green">Works</Badge>}{walled && <Badge tone="amber">Gatekeeper every time</Badge>}
-                          <span className="muted block text-xs">{p.personId ? `${person?.name?.split(" ")[0] ?? "Contact"}'s ${p.kind === "mobile" ? "mobile" : "direct line"}` : p.label ?? label(p.kind)} · {SOURCE[p.source]}{p.dials > 0 && ` · ${p.dials} dial${p.dials > 1 ? "s" : ""}`}</span>
+                          <span className="muted block truncate text-xs" title={p.label ?? undefined}>{p.personId ? `${person?.name?.split(" ")[0] ?? "Contact"}'s ${p.kind === "mobile" ? "mobile" : "direct line"}` : (p.label ?? label(p.kind)).split(/[(|]/)[0].trim().slice(0, 44)} · {SOURCE[p.source]}{p.dials > 0 && ` · ${p.dials} dial${p.dials > 1 ? "s" : ""}`}</span>
                         </span>
                         {!dead && <CopyButton text={p.number}>Copy</CopyButton>}
                       </label>
@@ -83,11 +90,18 @@ export default async function Calls({ searchParams }: { searchParams: Promise<{ 
                   })}
                 </div>
               </div>
-              <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-stone-100 pt-3">
-                <input name="notes" placeholder="Note (optional)" className="field mr-1 w-56 py-1 text-xs" />
-                {OUTCOMES.map(([value, text, cls]) => <button key={value} name="outcome" value={value} className={cls}>{text}</button>)}
-              </div>
-            </form>
+              {phones.length > 0 && (
+                <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-stone-100 pt-3">
+                  <input name="notes" placeholder="Note (optional)" className="field mr-1 w-52 py-1 text-xs" />
+                  {OUTCOMES.map(([value, text, cls]) => <button key={value} name="outcome" value={value} className={cls}>{text}</button>)}
+                  <details className="relative">
+                    <summary className="btn list-none">Other ▾</summary>
+                    <div className="absolute right-0 z-10 mt-1 flex w-44 flex-col gap-1 rounded-lg border border-stone-200 bg-white p-2 shadow-lg">{ENDINGS.map(([value, text]) => <button key={value} name="outcome" value={value} className="btn btn-danger justify-start">{text}</button>)}</div>
+                  </details>
+                  <span className="muted ml-auto flex items-center gap-1 text-xs">Dialed by <select name="userId" defaultValue={who?.id ?? ""} className="field py-0.5 text-xs">{users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></span>
+                </div>
+              )}
+            </Card>
           );
         })}
       </div>

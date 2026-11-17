@@ -62,8 +62,9 @@ export async function phonesForCompanies(companyIds: number[]): Promise<Map<numb
 export function phoneStatusAfter(outcome: string): s.PhoneStatus | null {
   if (outcome === "bad_number") return "bad";
   if (outcome === "do_not_contact") return "do_not_call";
-  if (outcome === "no_answer" || outcome === "other") return null;
-  return "good"; // someone or something answered: the line works
+  // A voicemail or no answer proves nothing about the line. Only a person picking up does.
+  if (outcome === "no_answer" || outcome === "voicemail" || outcome === "other") return null;
+  return "good";
 }
 
 export async function setPhoneStatus(phoneId: number, status: s.PhoneStatus) {

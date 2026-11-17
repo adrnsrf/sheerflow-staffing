@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { addToSearchAction, candidateStageAction, queueJobAction, saveRoleAction, saveRoleStyleAction } from "@/app/actions";
+import { addToSearchAction, candidateStageAction, saveRequirementsAction, saveRoleStyleAction } from "@/app/actions";
+import { AskClaude } from "@/components/ask-claude";
 import { MatchScore, MatchWhy, PersonalityScales, ToolFit } from "@/components/candidate";
 import { CandidateOutreach } from "@/components/outreach";
 import { retellConfigured } from "@/connectors/retell";
-import { getCandidateActions } from "@/core/candidate-actions";
+import { feelersForRole } from "@/core/candidate-actions";
 import { Act, Badge, PageHeader } from "@/components/ui";
 import { getSearch } from "@/core";
 import { DIMENSIONS, SIZE_LABEL, describeDimension } from "@/core/candidate-schema";
@@ -20,7 +21,7 @@ export default async function Role({ params }: { params: Promise<{ id: string }>
   const { search, client, candidates } = data;
   const matches = await matchRole(search.id, 12);
   // The ready-to-send words for each person on this role, keyed by person.
-  const ready = new Map((await getCandidateActions({ searchId: search.id, limit: 200 })).map((a) => [a.person.id, a]));
+  const ready = await feelersForRole(search.id, matches.map((m) => m.personId));
   const req = search.requirements;
   const inPipeline = new Set(candidates.map((c) => c.person.id));
   return (
@@ -29,7 +30,7 @@ export default async function Role({ params }: { params: Promise<{ id: string }>
       <PageHeader title={search.title} sub={[client, search.compRange].filter(Boolean).join(" · ")}>
         {search.isSample && <Badge>Sample</Badge>}
         <Badge tone={search.status === "open" ? "green" : "amber"}>{label(search.status)}</Badge>
-        <Act action={queueJobAction} fields={{ kind: "source_candidates", title: `Source candidates for ${search.title}`, payload: JSON.stringify({ searchId: search.id }) }} title="Queues a job for the next Claude run">Ask Claude to source more</Act>
+        <AskClaude kind="source_candidates" title={`Source candidates for ${search.title}`} payload={{ searchId: search.id }}>Ask Claude to source more</AskClaude>
       </PageHeader>
       <div className="grid gap-6 lg:grid-cols-3">
         <section className="card p-4 text-sm lg:col-span-2">
@@ -59,8 +60,8 @@ export default async function Role({ params }: { params: Promise<{ id: string }>
                 <input type="hidden" name="id" value={search.id} />
                 {DIMENSIONS.map((d) => (
                   <div key={d.key} className="flex items-center gap-2">
-                    <span className="w-24 shrink-0 text-xs">{d.label}</span>
-                    <select name={`v_${d.key}`} defaultValue={req?.style?.[d.key] ?? ""} className="field flex-1 py-1 text-xs"><option value="">No preference</option>{[1, 2, 3, 4, 5].map((v) => <option key={v} value={v}>{describeDimension(d.key, v)}</option>)}</select>
+                    <span className="w-20 shrink-0 text-xs">{d.label}</span>
+                    <select name={`v_${d.key}`} defaultValue={req?.style?.[d.key] ?? ""} className="field min-w-0 flex-1 py-1 text-xs"><option value="">No preference</option>{[1, 2, 3, 4, 5].map((v) => <option key={v} value={v}>{describeDimension(d.key, v)}</option>)}</select>
                   </div>
                 ))}
                 <button className="btn">Save and rematch</button>
@@ -68,19 +69,40 @@ export default async function Role({ params }: { params: Promise<{ id: string }>
             </details>
           </div>
           <details className="mt-3">
-            <summary className="cursor-pointer text-xs font-medium text-brand">Edit the description or requirements</summary>
-            <form action={saveRoleAction} className="mt-2 space-y-2">
-              <input type="hidden" name="id" value={search.id} /><input type="hidden" name="title" value={search.title} /><input type="hidden" name="clientName" value={search.clientName ?? ""} />
-              <textarea name="description" rows={6} defaultValue={search.description ?? ""} className="field w-full text-xs" />
-              <textarea name="requirements" rows={12} defaultValue={JSON.stringify(req, null, 2)} className="field w-full font-mono text-[11px]" spellCheck={false} />
-              <button className="btn">Save and rematch</button>
+            <summary className="cursor-pointer text-xs font-medium text-brand">Change what the role requires</summary>
+            <form action={saveRequirementsAction} className="mt-2 space-y-2 text-xs">
+              <input type="hidden" name="id" value={search.id} /><input type="hidden" name="count" value={req?.tools.length ?? 0} />
+              {(req?.tools ?? []).map((t, i) => (
+                <div key={t.name} className="flex items-center gap-1.5">
+                  <input type="hidden" name={`n_${i}`} value={t.name} />
+                  <span className="min-w-0 flex-1 truncate font-medium">{t.name}</span>
+                  <input name={`y_${i}`} type="number" min={0} max={30} defaultValue={t.minYears} className="field w-14 py-0.5" title="Years needed" />
+                  <select name={`m_${i}`} defaultValue={t.must ? "must" : "nice"} className="field py-0.5"><option value="must">Must</option><option value="nice">Nice</option></select>
+                  <label className="muted flex items-center gap-1" title="Remove this tool"><input type="checkbox" name={`x_${i}`} /> drop</label>
+                </div>
+              ))}
+              <div className="flex items-center gap-1.5 border-t border-stone-100 pt-2">
+                <input name="new_name" placeholder="Add a tool" className="field min-w-0 flex-1 py-0.5" />
+                <input name="new_years" type="number" min={0} max={30} placeholder="yrs" className="field w-14 py-0.5" />
+                <select name="new_must" className="field py-0.5"><option value="must">Must</option><option value="nice">Nice</option></select>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5 border-t border-stone-100 pt-2">
+                <label>Years overall<input name="minTotalYears" type="number" min={0} defaultValue={req?.minTotalYears ?? ""} className="field mt-0.5 w-full py-0.5" /></label>
+                <label>Pay up to ($k)<input name="maxBase" type="number" min={0} defaultValue={req?.maxBase ? Math.round(req.maxBase / 1000) : ""} className="field mt-0.5 w-full py-0.5" /></label>
+                <label>Company size<select name="companySize" defaultValue={req?.companySize ?? ""} className="field mt-0.5 w-full py-0.5"><option value="">Not stated</option>{(Object.keys(SIZE_LABEL) as (keyof typeof SIZE_LABEL)[]).map((k) => <option key={k} value={k}>{SIZE_LABEL[k]}</option>)}</select></label>
+                <label>Where<select name="workplace" defaultValue={req?.workplace ?? ""} className="field mt-0.5 w-full py-0.5"><option value="">Not stated</option><option value="remote">Remote</option><option value="hybrid">Hybrid</option><option value="onsite">On-site</option></select></label>
+                <label>City<input name="city" defaultValue={req?.city ?? ""} className="field mt-0.5 w-full py-0.5" /></label>
+                <label>State<input name="state" defaultValue={req?.state ?? ""} maxLength={2} className="field mt-0.5 w-full py-0.5" /></label>
+              </div>
+              <label className="block">Job description<textarea name="description" rows={5} defaultValue={search.description ?? ""} className="field mt-0.5 w-full" /></label>
+              <button className="btn btn-primary">Save and rematch</button>
             </form>
           </details>
         </section>
       </div>
 
       <h2 className="mt-8 mb-1 text-sm font-semibold">Best matches</h2>
-      <p className="muted mb-3 max-w-3xl text-xs">Score = 65% requirements (tools at the years asked, experience, company size, location, pay, and style where it is known) + 35% similarity (how closely the whole profile reads to this job description). Anyone missing a must-have tool is capped at 55.</p>
+      <p className="muted mb-3 max-w-3xl text-xs">Score = 65% requirements (tools at the years asked, experience, company size, location, pay, and style where it is known) + 35% similarity (how closely the whole profile reads to this job description). Anyone missing a must-have tool cannot score above 55.</p>
       <div className="space-y-2">
         {matches.map((m) => (
           <div key={m.personId} className="card flex items-start gap-4 p-4">
@@ -89,7 +111,7 @@ export default async function Role({ params }: { params: Promise<{ id: string }>
               <div className="flex flex-wrap items-baseline gap-2"><Link href={`/sourcing/candidates/${m.personId}`} className="font-semibold text-brand hover:underline">{m.name}</Link><span className="muted text-sm">{m.headline}</span></div>
               <div className="mt-1.5"><ToolFit tools={m.tools} /></div>
               <MatchWhy m={m} />
-              {ready.get(m.personId)?.feeler && <div className="mt-2.5 border-t border-stone-100 pt-2.5"><CandidateOutreach person={ready.get(m.personId)!.person} searchId={search.id} feeler={ready.get(m.personId)!.feeler!} retellLive={retellConfigured()} compact /></div>}
+              {ready.get(m.personId) && <div className="mt-2.5 border-t border-stone-100 pt-2.5"><CandidateOutreach person={ready.get(m.personId)!.person} searchId={search.id} feeler={ready.get(m.personId)!.feeler} retellLive={retellConfigured()} compact /></div>}
             </div>
             <div className="shrink-0">{inPipeline.has(m.personId) ? <Badge tone="green">In pipeline</Badge> : <Act action={addToSearchAction} fields={{ searchId: search.id, personId: m.personId, fitScore: m.score, fitNotes: m.parts[0].note }} className="btn btn-primary">Add to pipeline</Act>}</div>
           </div>

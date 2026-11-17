@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Sidebar } from "@/components/client";
+import { SectionTabs, Sidebar } from "@/components/client";
 import { getOverview } from "@/core";
 import "./globals.css";
 
@@ -15,7 +15,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body className="flex min-h-full">
         <Sidebar counts={counts} />
         <main className="min-w-0 flex-1 px-8 py-7">
-          <div className="mx-auto max-w-6xl">{children}</div>
+          <div className="mx-auto max-w-6xl"><SectionTabs />{children}</div>
         </main>
       </body>
     </html>

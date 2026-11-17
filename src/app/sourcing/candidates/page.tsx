@@ -34,7 +34,7 @@ export default async function Candidates({ searchParams }: { searchParams: Promi
                     <td><Link href={`/sourcing/candidates/${person.id}`} className="font-medium text-brand hover:underline">{person.name}</Link>{cp.isSample && <> <Badge>Sample</Badge></>}<div className="muted max-w-64 text-xs">{p.headline}{p.totalYears ? ` · ${p.totalYears} yrs` : ""}</div>{hit && <div className="mt-1 max-w-md text-xs text-stone-600"><span className="font-medium">{hit.matchedOn}:</span> {hit.snippet}{hit.snippet.length >= 220 && "…"}</div>}</td>
                     <td className="max-w-72 text-xs">{[...p.skills].sort((a, b) => b.years - a.years).slice(0, 5).map((sk) => `${sk.name} ${sk.years}`).join(" · ")}</td>
                     <td className="text-xs">{[p.location.city, p.location.state].filter(Boolean).join(", ")}<div className="muted">{p.location.workplace ?? "Preference unknown"}</div></td>
-                    <td className="text-xs tabular-nums">{p.compensation.targetBase ? `$${Math.round(p.compensation.targetBase / 1000)}k` : <span className="muted">Unknown</span>}</td>
+                    <td className="text-xs tabular-nums">{p.compensation.targetBase ? <>${Math.round(p.compensation.targetBase / 1000)}k{p.compensation.minimumBase && p.compensation.minimumBase !== p.compensation.targetBase && <div className="muted">min ${Math.round(p.compensation.minimumBase / 1000)}k</div>}</> : <span className="muted">Unknown</span>}</td>
                     <td><Badge tone={cp.completeness >= 80 ? "green" : cp.completeness >= 50 ? "amber" : "red"}>{cp.completeness}% known</Badge></td>
                   </tr>
                 );

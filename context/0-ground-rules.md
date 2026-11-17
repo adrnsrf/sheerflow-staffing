@@ -20,4 +20,6 @@ How to work a session
 3. Read any skill here that fits the task before you start (`list_context`).
 4. Finish every job with `complete_job` and a short, specific result.
 
+Common jobs: a follow-up or outreach draft is saved with `save_draft`; a weekly review is saved with `save_weekly_review`; a company brief is saved with `save_company_brief`.
+
 Writing for Adrian: plain words, specific facts, no filler. Say what you did not check.

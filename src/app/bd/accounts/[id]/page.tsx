@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { addToCallListAction, queueJobAction } from "@/app/actions";
+import { addToCallListAction } from "@/app/actions";
+import { AskClaude } from "@/components/ask-claude";
 import { LinkedInActions } from "@/components/linkedin";
 import { Act, Badge, PageHeader, Tier } from "@/components/ui";
 import { fee, getAccount } from "@/core";
@@ -20,7 +21,7 @@ export default async function Account({ params }: { params: Promise<{ id: string
         <Tier tier={c.icpTier} score={c.icpScore} />
         {dnc && <Badge tone="red">Do not contact</Badge>}
         {queue ? <Link href="/bd/calls" className="btn">On call list: {label(queue.status === "new" ? "not_started" : queue.status)}</Link> : !dnc && <Act action={addToCallListAction} fields={{ companyId: c.id }} className="btn btn-primary">Add to call list</Act>}
-        <Act action={queueJobAction} fields={{ kind: "company_brief", title: `Refresh the brief for ${c.name}`, payload: JSON.stringify({ companyId: c.id }) }} title="Queues a job for the next Claude run">Ask Claude to refresh brief</Act>
+        <AskClaude kind="company_brief" title={`Write the brief for ${c.name}`} payload={{ companyId: c.id }}>Ask Claude to write the brief</AskClaude>
       </PageHeader>
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
@@ -56,14 +57,15 @@ export default async function Account({ params }: { params: Promise<{ id: string
             <h2 className="border-b border-stone-200 px-4 py-3 text-sm font-semibold">Phone numbers</h2>
             {phones.length === 0 ? <p className="muted p-4 text-sm">None on file.</p> : (
               <table className="tbl">
-                <thead><tr><th>Number</th><th>Whose</th><th>Source</th><th>Status</th><th className="text-right">Dials</th><th className="text-right">Bad</th><th className="text-right">Gatekeeper</th><th className="text-right">Reached</th></tr></thead>
+                <thead><tr><th>Number</th><th>Status</th><th className="text-right">Dials</th><th className="text-right">Bad</th><th className="text-right">Gatekeeper</th><th className="text-right">Reached</th></tr></thead>
                 <tbody>
                   {phones.map((p) => (
                     <tr key={p.id}>
-                      <td className={`font-medium tabular-nums whitespace-nowrap ${p.status === "bad" ? "line-through opacity-60" : ""}`}>{p.number}</td>
-                      <td className="text-xs">{p.personId ? people.find((x) => x.id === p.personId)?.name ?? "Contact" : p.label ?? label(p.kind)}<div className="muted">{label(p.kind)}</div></td>
-                      <td className="text-xs">{label(p.source)}{p.sourceDetail && <div className="muted">{p.sourceDetail}</div>}</td>
-                      <td><Badge tone={p.status === "good" ? "green" : p.status === "unverified" ? "gray" : "red"}>{label(p.status)}</Badge></td>
+                      <td>
+                        <div className={`font-medium tabular-nums whitespace-nowrap ${p.status === "bad" ? "line-through opacity-60" : ""}`}>{p.number}</div>
+                        <div className="muted max-w-md text-xs">{p.personId ? people.find((x) => x.id === p.personId)?.name ?? "Contact" : p.label ?? label(p.kind)} · from {label(p.source).toLowerCase()}{p.sourceDetail && ` (${p.sourceDetail})`}</div>
+                      </td>
+                      <td><Badge tone={p.status === "good" ? "green" : p.status === "unverified" ? "gray" : "red"}>{p.status === "good" ? "Works" : p.status === "unverified" ? "Not tried" : label(p.status)}</Badge></td>
                       <td className="text-right tabular-nums">{p.dials}</td><td className="text-right tabular-nums">{p.bad}</td><td className="text-right tabular-nums">{p.gatekeeper}</td><td className="text-right tabular-nums">{p.reached}</td>
                     </tr>
                   ))}

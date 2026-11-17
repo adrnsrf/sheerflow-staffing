@@ -22,7 +22,7 @@ export default async function Import({ searchParams }: { searchParams: Promise<{
     <>
       <PageHeader title="Import" sub="Bring over what the routines have produced so far. Every import can be run again: it adds what is new, skips what it has seen, and keeps the original row so no column is lost." />
       {q.error && <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{q.error}</div>}
-      {q.done && <div className="mb-4 rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-900"><span className="font-semibold">{SOURCES.find((x) => x.kind === q.done)?.name} imported.</span> {q.result}</div>}
+      {q.done && <div className="mb-4 rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-900"><span className="font-semibold">{SOURCES.find((x) => x.kind === q.done)?.name}.</span> {q.result}</div>}
       <div className="space-y-3">
         {SOURCES.map((src) => {
           const info = fileInfo(src.kind);
@@ -33,7 +33,7 @@ export default async function Import({ searchParams }: { searchParams: Promise<{
                   <div className="font-semibold">{src.name}</div>
                   <div className="muted">From: {src.from}</div>
                   <div className="muted">Goes to: {src.to}</div>
-                  <div className="mt-1 text-xs">{info ? <>File <code className="rounded bg-stone-100 px-1">imports/{src.kind}.json</code> has {info.rows} rows (saved {info.modified.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}).</> : <span className="muted">No file at imports/{src.kind}.json yet.</span>}</div>
+                  <div className="mt-1 text-xs">{info ? <>A file with {info.rows} rows is ready (saved {info.modified.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}).</> : <span className="muted">No file is waiting. Upload a CSV, or have Claude bring the rows in.</span>}</div>
                 </div>
                 <div className="flex flex-col items-end gap-2">
                   {info && <form action={importAction}><input type="hidden" name="kind" value={src.kind} /><button className="btn btn-primary">Import {info.rows} rows from file</button></form>}
@@ -51,7 +51,7 @@ export default async function Import({ searchParams }: { searchParams: Promise<{
         })}
       </div>
       <p className="muted mt-6 max-w-3xl text-xs leading-relaxed">
-        Two ways to refresh: in Google Sheets use File, Download, Comma-separated values and upload it here, or let a Claude run copy rows across with its Google connection. The <code>imports/</code> folder holds real contact data and is never committed to the repository.
+        To refresh from a sheet: in Google Sheets choose File, Download, Comma-separated values, then upload that file here. Running an import twice is safe. Imported contact data stays on this computer.
       </p>
     </>
   );

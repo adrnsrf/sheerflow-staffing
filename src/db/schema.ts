@@ -453,6 +453,19 @@ export const jobs = pgTable("jobs", {
   completedAt: timestamp("completed_at", { withTimezone: true }),
 });
 
+/** One run of Claude working the job queue, started from the app. */
+export const claudeRuns = pgTable("claude_runs", {
+  id: serial("id").primaryKey(),
+  status: text("status").$type<"running" | "finished" | "failed">().notNull().default("running"),
+  startedBy: text("started_by").notNull().default("button"),
+  jobsWaiting: integer("jobs_waiting").notNull().default(0),
+  jobsDone: integer("jobs_done").notNull().default(0),
+  /** What Claude said at the end of the run. */
+  summary: text("summary"),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+});
+
 export const creditLedger = pgTable("credit_ledger", {
   id: serial("id").primaryKey(),
   provider: text("provider").notNull().default("apollo"),

@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { compileCandidateAction, refreshScreenCallAction } from "@/app/actions";
+import { refreshScreenCallAction } from "@/app/actions";
+import { AskClaude } from "@/components/ask-claude";
 import { CandidateOutreach } from "@/components/outreach";
 import { Act, Badge, Empty, PageHeader, type Tone } from "@/components/ui";
 import { retellConfigured } from "@/connectors/retell";
@@ -10,7 +11,7 @@ const KIND: Record<CandidateActionKind, [string, Tone]> = {
 };
 
 function Buttons({ a, live }: { a: CandidateAction; live: boolean }) {
-  if (a.kind === "compile") return <Act action={compileCandidateAction} fields={{ personId: a.person.id }} className="btn btn-primary" title="Queues a job for the next Claude run">Ask Claude to compile</Act>;
+  if (a.kind === "compile") return <AskClaude kind="compile_candidate" title={`Compile the profile for ${a.person.name}`} payload={{ personId: a.person.id }} className="btn btn-primary">Ask Claude to read their material</AskClaude>;
   if (a.kind === "check_call") return <Act action={refreshScreenCallAction} fields={{ id: a.callId! }} className="btn btn-primary">Check for transcript</Act>;
   if (a.kind === "submit") return <Link href={`/sourcing/searches/${a.role!.id}`} className="btn btn-primary">Open role to submit</Link>;
   return a.feeler && a.role ? <CandidateOutreach person={a.person} searchId={a.role.id} feeler={a.feeler} retellLive={live} compact /> : null;

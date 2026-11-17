@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { connectionStatusAction, draftMessageAction, queueConnectionAction } from "@/app/actions";
 
 type P = { id: number; name: string; linkedinUrl: string | null; connectionStatus: string; connectionNote: string | null };
@@ -11,6 +11,7 @@ type P = { id: number; name: string; linkedinUrl: string | null; connectionStatu
  */
 export function LinkedInActions({ person: p, compact = false }: { person: P; compact?: boolean }) {
   const [busy, start] = useTransition();
+  const [asked, setAsked] = useState(false);
   const run = (action: (f: FormData) => Promise<void>, fields: Record<string, string | number>) =>
     start(async () => { const f = new FormData(); Object.entries(fields).forEach(([k, v]) => f.set(k, String(v))); await action(f); });
   const open = () => p.linkedinUrl && window.open(p.linkedinUrl, "_blank", "noopener");
@@ -18,20 +19,27 @@ export function LinkedInActions({ person: p, compact = false }: { person: P; com
   if (!p.linkedinUrl) return <span className="muted text-xs">No LinkedIn link</span>;
   return (
     <span className={`inline-flex flex-wrap items-center gap-1.5 ${busy ? "opacity-60" : ""}`}>
-      {(st === "none" || st === "queued" || st === "note_ready") && (
+      {(st === "none" || st === "queued" || st === "note_ready") && !asked && (
         <button
           className="btn btn-primary"
-          title={p.connectionNote ? "Copies the note, opens the profile in a new tab and marks the request as sent" : "Opens the profile in a new tab and marks the request as sent"}
+          title={p.connectionNote ? "Copies the note and opens their profile in a new tab. You press Connect there." : "Opens their profile in a new tab. You press Connect there."}
           onClick={async () => {
             if (p.connectionNote) { try { await navigator.clipboard.writeText(p.connectionNote); } catch { /* clipboard blocked */ } }
             open();
-            run(connectionStatusAction, { personId: p.id, status: "sent" });
+            setAsked(true);
           }}
         >
           {p.connectionNote ? "Copy note & connect" : "Connect"}
         </button>
       )}
-      {st === "none" && <button className="btn" title="Queues a job: Claude writes a note first" onClick={() => run(queueConnectionAction, { personId: p.id })}>Draft note first</button>}
+      {asked && st !== "sent" && st !== "connected" && (
+        <span className="inline-flex items-center gap-1.5 rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-900">
+          Did you send the request?
+          <button className="btn btn-primary" onClick={() => run(connectionStatusAction, { personId: p.id, status: "sent" })}>Yes, sent</button>
+          <button className="btn" onClick={() => setAsked(false)}>Not yet</button>
+        </span>
+      )}
+      {st === "none" && !asked && <button className="btn" title="Adds this to Claude's list: it writes a note to send with the request" onClick={() => run(queueConnectionAction, { personId: p.id })}>Draft note first</button>}
       {st === "queued" && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800">Note queued for Claude</span>}
       {st === "sent" && (
         <>

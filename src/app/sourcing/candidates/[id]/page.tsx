@@ -1,13 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { addSourceAction, compileCandidateAction, consentAction, refreshScreenCallAction, savePersonalityAction, saveProfileAction } from "@/app/actions";
+import { addSourceAction, consentAction, refreshScreenCallAction, savePersonalityAction, saveProfileAction } from "@/app/actions";
+import { AskClaude } from "@/components/ask-claude";
 import { CandidateOutreach } from "@/components/outreach";
 import { retellConfigured } from "@/connectors/retell";
 import { outreachFor } from "@/core/candidate-actions";
 import { listScreenCalls } from "@/core/outreach";
 import { PersonalityScales } from "@/components/candidate";
 import { Act, Badge, PageHeader } from "@/components/ui";
-import { DIMENSIONS, SIZE_LABEL, SOURCES, SOURCE_LABEL, describeDimension, personalityOf } from "@/core/candidate-schema";
+import { DIMENSIONS, SIZE_LABEL, SOURCES, SOURCE_LABEL, describeDimension, personalityOf, toolsIn } from "@/core/candidate-schema";
 import { getCandidate } from "@/core/candidates";
 import { rolesForCandidate } from "@/core/matching";
 import { fmtDate, label } from "@/lib/format";
@@ -25,6 +26,9 @@ export default async function Candidate({ params, searchParams }: { params: Prom
   const reach = roleId ? await outreachFor(id, roleId) : null;
   const uncompiled = sources.filter((s) => !s.compiledAt).length;
   const pers = personalityOf(p), known = Object.keys(pers.dimensions).length;
+  // Material has been pasted but not worked into the profile: say so instead of showing "no X".
+  const unread = uncompiled > 0 && p.skills.length === 0;
+  const mentions = unread ? toolsIn(sources.filter((x) => !x.compiledAt).map((x) => x.content).join(" ")).slice(0, 8) : [];
   return (
     <>
       <div className="muted mb-2 text-xs"><Link href="/sourcing/candidates" className="hover:underline">Candidates</Link> / {person.name}</div>
@@ -118,7 +122,7 @@ export default async function Candidate({ params, searchParams }: { params: Prom
           <section className="card">
             <div className="flex items-center justify-between border-b border-stone-200 px-4 py-3">
               <h2 className="text-sm font-semibold">Where this came from ({sources.length})</h2>
-              <Act action={compileCandidateAction} fields={{ personId: id }} title="Queues a job: Claude reads everything below and rewrites the profile">{uncompiled ? `Ask Claude to compile (${uncompiled} new)` : "Ask Claude to recompile"}</Act>
+              <AskClaude kind="compile_candidate" title={`Compile the profile for ${person.name}`} payload={{ personId: id }}>{uncompiled ? `Ask Claude to read these (${uncompiled} new)` : "Ask Claude to re-read these"}</AskClaude>
             </div>
             {sources.map((s) => (
               <details key={s.id} className="border-b border-stone-100 px-4 py-2.5 text-sm">
@@ -137,7 +141,7 @@ export default async function Candidate({ params, searchParams }: { params: Prom
             </form>
           </section>
           <details className="card p-4 text-sm">
-            <summary className="cursor-pointer font-semibold">Edit the profile data directly</summary>
+            <summary className="muted cursor-pointer text-xs">Advanced: edit the stored profile as data</summary>
             <p className="muted mt-2 text-xs">This is the structured profile exactly as stored. Saving checks it against the schema and rebuilds the search vector.</p>
             <form action={saveProfileAction} className="mt-2 space-y-2">
               <input type="hidden" name="personId" value={id} />
@@ -150,9 +154,9 @@ export default async function Candidate({ params, searchParams }: { params: Prom
           {reach && (
             <section className="card p-4 text-sm">
               <h2 className="text-sm font-semibold">Reach out</h2>
-              <form className="mt-1 mb-3 flex items-center gap-2">
+              <form className="mt-1 mb-3 flex min-w-0 items-center gap-2">
                 <span className="muted text-xs">About</span>
-                <select name="role" defaultValue={roleId} className="field flex-1 py-1 text-xs">{roles.map((r) => <option key={r.searchId} value={r.searchId}>{r.title} ({r.structured}{r.missingMust.length ? ", missing a must-have" : ""})</option>)}</select>
+                <select name="role" defaultValue={roleId} className="field min-w-0 flex-1 py-1 text-xs">{roles.map((r) => <option key={r.searchId} value={r.searchId}>{r.title} ({r.structured}{r.missingMust.length ? ", missing a must-have" : ""})</option>)}</select>
                 <button className="btn">Switch</button>
               </form>
               <CandidateOutreach person={person} searchId={reach.role.id} feeler={reach.feeler} retellLive={retellConfigured()} />
@@ -200,9 +204,10 @@ export default async function Candidate({ params, searchParams }: { params: Prom
           <section className="card">
             <h2 className="border-b border-stone-200 px-4 py-3 text-sm font-semibold">Best-fitting open roles</h2>
             {roles.length === 0 && <p className="muted p-4 text-sm">No open roles.</p>}
+            {unread && <p className="border-b border-stone-100 bg-amber-50 px-4 py-2.5 text-xs text-amber-900">Claude has not read what you pasted yet, so these scores are not meaningful. {mentions.length > 0 && <>It mentions {mentions.join(", ")}.</>}</p>}
             {roles.slice(0, 5).map((r) => (
               <Link key={r.searchId} href={`/sourcing/searches/${r.searchId}`} className="flex items-center justify-between gap-2 border-b border-stone-100 px-4 py-2.5 text-sm last:border-b-0 hover:bg-stone-50">
-                <span className="min-w-0"><span className="block truncate font-medium">{r.title}</span><span className="muted block truncate text-xs">{r.client}{r.missingMust.length > 0 && ` · no ${r.missingMust.join(", ")}`}</span></span>
+                <span className="min-w-0"><span className="block truncate font-medium">{r.title}</span><span className="muted block truncate text-xs">{r.client}{!unread && r.missingMust.length > 0 && ` · no ${r.missingMust.join(", ")}`}</span></span>
                 <Badge tone={r.missingMust.length ? "gray" : r.structured >= 80 ? "green" : "amber"}>{r.structured}</Badge>
               </Link>
             ))}

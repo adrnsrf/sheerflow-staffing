@@ -26,7 +26,7 @@ export function Badge({ tone = "gray", children }: { tone?: Tone; children: Reac
 
 export const tierTone = (t: string | null | undefined): Tone => (t === "A" ? "green" : t === "B" ? "blue" : "gray");
 export function Tier({ tier, score }: { tier: string | null | undefined; score?: number | null }) {
-  if (!tier) return <Badge>Unscored</Badge>;
+  if (!tier) return null;
   return <Badge tone={tierTone(tier)}>Tier {tier}{score != null && ` · ${score}`}</Badge>;
 }
 

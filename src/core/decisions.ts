@@ -18,6 +18,8 @@ export type NextAction = {
   /** Rank. Roughly: how sure we are this is worth doing now. */
   score: number; why: string[];
   company: { id: number; name: string }; person: (typeof s.people.$inferSelect) | null; queueId?: number;
+  /** Set when Claude has already written the message and it is waiting for review. */
+  draftReady?: boolean;
 };
 
 const DAY = 86_400_000;
@@ -42,12 +44,13 @@ const RULES = {
 
 export async function getNextActions(opts: { limit?: number; kind?: ActionKind } = {}): Promise<NextAction[]> {
   const db = await getDb();
-  const [companies, people, queue, phones, drafts, emails, companyHeat, personHeat] = await Promise.all([
+  const [companies, people, queue, phones, drafts, followUpDrafts, emails, companyHeat, personHeat] = await Promise.all([
     db.select().from(s.companies),
     db.select().from(s.people).where(eq(s.people.type, "decision_maker")),
     db.select().from(s.callQueue),
     db.select({ companyId: s.phoneNumbers.companyId, status: s.phoneNumbers.status }).from(s.phoneNumbers),
     db.select({ personId: s.drafts.personId }).from(s.drafts).where(and(eq(s.drafts.kind, "linkedin_message"), isNotNull(s.drafts.personId))),
+    db.select({ companyId: s.drafts.companyId, personId: s.drafts.personId }).from(s.drafts).where(and(eq(s.drafts.kind, "follow_up"), inArray(s.drafts.status, ["draft", "approved"]))),
     db.select({ companyId: s.activities.companyId, at: s.activities.occurredAt }).from(s.activities).where(inArray(s.activities.type, ["email", "meeting"])),
     allCompanyHeat(), allPersonHeat(),
   ]);
@@ -109,7 +112,8 @@ export async function getNextActions(opts: { limit?: number; kind?: ActionKind }
       const followedUp = emails.some((e) => e.companyId === c.id && q.lastContactAt && e.at.getTime() >= q.lastContactAt.getTime());
       // If they asked us to come back later, respect the date instead of nudging now.
       const parked = !!q.nextStepDate && q.nextStepDate.getTime() > Date.now() + 3 * DAY;
-      if (!followedUp && !parked) add({ key: `c${c.id}:follow`, kind: "follow_up", headline: `Follow up with ${lead?.name ?? c.name}`, when: daysSince(q.lastContactAt) <= RULES.followUpWithinDays ? "Today" : "This week",
+      const drafted = followUpDrafts.some((d) => d.companyId === c.id || (!!lead && d.personId === lead.id));
+      if (!followedUp && !parked) add({ key: `c${c.id}:follow`, kind: "follow_up", draftReady: drafted, headline: drafted ? `Review and send the follow-up to ${lead?.name ?? c.name}` : `Follow up with ${lead?.name ?? c.name}`, when: daysSince(q.lastContactAt) <= RULES.followUpWithinDays ? "Today" : "This week",
         score: 90 - Math.min(20, daysSince(q.lastContactAt)), companyId: c.id, person: lead, queueId: q.id,
         why: [`${q.sourceStatus === "E-mail Requested" ? "Asked for an email" : "Spoke with us"} ${ago(daysSince(q.lastContactAt))} and no follow-up is logged`, ...ch.top_reasons.filter((r) => !/^(Spoke with us|Asked for an email|Booked a meeting)/.test(r)).slice(0, 2)] });
     } else if (q && q.status === "needs_info") {

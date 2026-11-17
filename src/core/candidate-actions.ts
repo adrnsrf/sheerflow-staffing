@@ -8,6 +8,7 @@
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import * as s from "@/db/schema";
+import { retellConfigured } from "@/connectors/retell";
 import { candidatesReady } from "./candidates";
 import { matchRole, type Match } from "./matching";
 import { feeler, type Feeler } from "./outreach";
@@ -64,9 +65,12 @@ export async function getCandidateActions(opts: { limit?: number; searchId?: num
       } else if (link?.stage === "screened" && m.score >= RULES.submitMinScore && m.missingMust.length === 0) {
         // Screened and strong: the client should see them.
         actions.push({ ...base, key: `${role.id}:${p.id}`, kind: "submit", headline: `Submit ${p.name} to ${client}`, when: "Today", score: 90 + m.score / 10, why: ["Screened and still a strong match", ...fit] });
-      } else if (link?.stage === "contacted" && p.aiContactConsent && p.phone && (!call || call.status === "not_connected" || call.status === "failed")) {
+      } else if (retellConfigured() && link?.stage === "contacted" && p.aiContactConsent && p.phone && (!call || call.status === "failed")) {
         // They answered and agreed to a call: screen them while they are warm.
         actions.push({ ...base, key: `${role.id}:${p.id}`, kind: "screen", headline: `Start ${p.name}'s AI screen call`, when: "Today", score: 85 + m.score / 10, why: [`Agreed to a call: ${p.consentNote ?? "consent on file"}`, ...fit] });
+      } else if (last && last.outcome === "replied") {
+        // They answered. The next move is a conversation, not another message.
+        if (!["screened"].includes(link?.stage ?? "")) actions.push({ ...base, key: `${role.id}:${p.id}`, kind: "nudge", headline: `${p.name} replied about ${role.title}: answer them`, when: "Today", score: 92, why: [`Replied ${ago(last.occurredAt)}: ${last.notes ?? ""}`.slice(0, 160), ...fit.slice(0, 1)] });
       } else if (last && last.outcome === "feeler" && Date.now() - last.occurredAt.getTime() > RULES.nudgeAfterDays * DAY && mine.filter((t) => t.outcome === "feeler").length < 2) {
         // One nudge, on a different channel if there is one. Never a third message.
         actions.push({ ...base, key: `${role.id}:${p.id}`, kind: "nudge", headline: `Follow up with ${p.name} about ${role.title}`, when: "This week", score: 50 + m.score / 5, feeler: undefined, why: [`${last.notes ?? "Reached out"} ${ago(last.occurredAt)}, no reply logged`, ...fit.slice(0, 1)] });
@@ -113,4 +117,16 @@ export async function outreachFor(personId: number, searchId: number) {
   ]);
   if (!cp || !role || !person) return null;
   return { person, role, feeler: feeler(person.name, cp.profile, role), touches: touches.sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime()) };
+}
+
+/** The ready-to-send words for each of these people about one role. */
+export async function feelersForRole(searchId: number, personIds: number[]) {
+  const db = await getDb();
+  const out = new Map<number, { person: typeof s.people.$inferSelect; feeler: Feeler }>();
+  if (personIds.length === 0) return out;
+  const [role] = await db.select().from(s.searches).where(eq(s.searches.id, searchId));
+  if (!role) return out;
+  const rows = await db.select({ person: s.people, profile: s.candidateProfiles.profile }).from(s.candidateProfiles).innerJoin(s.people, eq(s.candidateProfiles.personId, s.people.id)).where(inArray(s.candidateProfiles.personId, personIds));
+  for (const r of rows) out.set(r.person.id, { person: r.person, feeler: feeler(r.person.name, r.profile, role) });
+  return out;
 }

@@ -57,6 +57,13 @@
       "when": 1794942336483,
       "tag": "0007_nifty_justin_hammer",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1794946306966,
+      "tag": "0008_mute_micromax",
+      "breakpoints": true
     }
   ]
 }

@@ -12,20 +12,20 @@ export default async function ContextDoc({ params, searchParams }: { params: Pro
   const saved = (await searchParams).saved;
   return (
     <>
-      <div className="muted mb-2 text-xs"><Link href="/system/context" className="hover:underline">AI context</Link> / {doc?.title ?? "New"}</div>
-      <PageHeader title={doc?.title ?? "New skill or routine"} sub={doc?.basedOn ? `Based on: ${doc.basedOn}` : undefined}>
-        {doc && (doc.edited ? <Badge tone="violet">{doc.shipped ? "Edited by you" : "Yours"}</Badge> : <Badge>As shipped</Badge>)}
-        {doc?.shipped && doc.edited && <Act action={resetContextAction} fields={{ slug }} title="Discard your edits and go back to the text that came with the app">Reset to shipped text</Act>}
+      <div className="muted mb-2 text-xs"><Link href="/system/context" className="hover:underline">Claude&apos;s instructions</Link> / {doc?.title ?? "New"}</div>
+      <PageHeader title={doc?.title ?? "New guide or routine"} sub={doc?.basedOn ? `Based on: ${doc.basedOn}` : undefined}>
+        {doc && (doc.edited ? <Badge tone="violet">{doc.shipped ? "Edited by you" : "Written by you"}</Badge> : <Badge>Original</Badge>)}
+        {doc?.shipped && doc.edited && <Act action={resetContextAction} fields={{ slug }} title="Discard your edits and go back to the text that came with the app">Put back the original</Act>}
         {doc && !doc.shipped && <Act action={deleteContextAction} fields={{ slug }} className="btn btn-danger">Delete</Act>}
       </PageHeader>
-      {saved && <div className="mb-4 rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-900">{saved === "reset" ? "Back to the shipped text." : "Saved. Claude will read this version from now on."}</div>}
+      {saved && <div className="mb-4 rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-900">{saved === "reset" ? "Back to the original text." : "Saved. Claude will read this version from now on."}</div>}
       {/* Keyed on the saved version so the fields refresh after a save or reset. */}
       <form key={doc?.updatedAt.toISOString() ?? "new"} action={saveContextAction} className="card space-y-3 p-4 text-sm">
         {!isNew && <input type="hidden" name="slug" value={slug} />}
         <div className="grid gap-3 sm:grid-cols-4">
           <label className="sm:col-span-2"><span className="muted mb-1 block text-xs font-medium">Title</span><input name="title" defaultValue={doc?.title} required className="field w-full" /></label>
           <label><span className="muted mb-1 block text-xs font-medium">Kind</span>
-            <select name="kind" defaultValue={doc?.kind ?? "skill"} className="field w-full"><option value="skill">Skill (guidance)</option><option value="routine">Routine (can be queued)</option></select>
+            <select name="kind" defaultValue={doc?.kind ?? "skill"} className="field w-full"><option value="skill">Guide (how to do something)</option><option value="routine">Routine (a job Claude can run)</option></select>
           </label>
           <label><span className="muted mb-1 block text-xs font-medium">Schedule (routines)</span><input name="schedule" defaultValue={doc?.schedule ?? ""} placeholder="e.g. Sundays" className="field w-full" /></label>
         </div>

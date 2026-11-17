@@ -52,7 +52,11 @@ function styleFrom(lower: string, size: Requirements["companySize"]): Requiremen
 export function extractRequirements(text: string): Requirements {
   const lower = text.toLowerCase();
   // "Nice to have: X and Y." marks tools as optional, up to the end of that sentence.
-  const nice = (lower.match(/(nice to have|preferred|bonus|a plus)[^.]*\./g) ?? []).join(" ");
+  const nice = [
+    ...(lower.match(/(nice to have|nice-to-have|preferred|bonus|a plus|ideally|would be great)[^.]*\./g) ?? []),
+    // "some Python and Airflow", "familiarity with X", "exposure to X": wanted, not required.
+    ...(lower.match(/(some|familiarity with|exposure to|basic|a little|working knowledge of|comfortable with)\s[^.;]*/g) ?? []),
+  ].join(" ");
   const esc = (x: string) => x.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const tools = toolsIn(text).map((name) => {
     // "3+ years of Snowflake", "4+ years on AWS", "2 years of experience with dbt"
@@ -163,7 +167,9 @@ async function rank(vector: number[], req: Requirements, limit: number): Promise
     const st = scoreStructured(r.profile, req);
     const similarity = hi > lo ? (Number(r.sim) - lo) / (hi - lo) : 1;
     // Missing a must-have tool outright caps the match: it can be listed, but never near the top.
-    const cap = st.missingMust.length ? 0.55 : 1;
+    // So does living somewhere else when the role needs them in an office and they will not move.
+    const farAway = (req.workplace === "onsite" || req.workplace === "hybrid") && (st.parts.find((x) => x.label === "Location")?.score ?? 1) <= 0.15;
+    const cap = st.missingMust.length ? 0.55 : farAway ? 0.65 : 1;
     const score = Math.min(cap, WEIGHTS.structured * st.structured + WEIGHTS.similarity * similarity);
     return { personId: r.person_id, name: r.name, headline: r.profile.headline, score: Math.round(score * 100), structured: Math.round(st.structured * 100), similarity: Math.round(similarity * 100), rawSimilarity: Number(Number(r.sim).toFixed(3)), tools: st.tools, missingMust: st.missingMust, parts: st.parts };
   }).sort((a, b) => b.score - a.score).slice(0, limit);

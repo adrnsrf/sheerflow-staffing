@@ -274,10 +274,22 @@ export async function listPeople(opts: { search?: string; connection?: s.Connect
 
 // ---------- Claude job queue ----------
 
+/** The same request for the same thing, as one string. Used to stop a job being queued twice. */
+export const jobKey = (kind: string, payload: Record<string, unknown> = {}) => `${kind}|${Object.keys(payload).sort().map((k) => `${k}=${JSON.stringify(payload[k])}`).join("&")}`;
+
+/** Queue work for Claude. Asking twice for the same thing returns the job already waiting. */
 export async function queueJob(input: { kind: string; title: string; payload?: Record<string, unknown> }) {
   const db = await getDb();
+  const key = jobKey(input.kind, input.payload);
+  const waiting = (await db.select().from(s.jobs).where(eq(s.jobs.status, "queued"))).find((j) => jobKey(j.kind, j.payload) === key);
+  if (waiting) return waiting;
   const [job] = await db.insert(s.jobs).values({ kind: input.kind, title: input.title, payload: input.payload ?? {} }).returning();
   return job;
+}
+
+/** Take a job off the queue before Claude gets to it. */
+export async function cancelJob(jobId: number) {
+  await (await getDb()).delete(s.jobs).where(and(eq(s.jobs.id, jobId), eq(s.jobs.status, "queued")));
 }
 
 export async function listJobs(opts: { status?: s.JobStatus } = {}) {
@@ -454,4 +466,76 @@ export async function getOverview() {
   ]);
   const credits = await getCredits();
   return { newSignals, callsDue, notesWaiting, readyToSend, jobsQueued, draftsToReview, openTasks, apolloCreditsSpendable: credits.spendable, apolloCreditsBalance: credits.balance };
+}
+
+// ---------- Adding to the business side by hand ----------
+
+/** Find a company by name, or add it. Used by the add forms, where only a name is typed. */
+async function companyByName(name: string) {
+  if (!name.trim()) throw new Error("Type the company name");
+  return (await upsertCompany({ name })).company;
+}
+
+export async function addDeal(input: { companyName: string; roleTitle: string; estSalary: number; feePct: number; stage?: s.DealStage }) {
+  const db = await getDb();
+  if (!input.roleTitle.trim() || !(input.estSalary > 0) || !(input.feePct > 0)) throw new Error("A deal needs a role, a salary and a fee percentage");
+  const company = await companyByName(input.companyName);
+  const [owner] = await db.select().from(s.users).where(eq(s.users.role, "owner"));
+  return (await db.insert(s.deals).values({ companyId: company.id, roleTitle: input.roleTitle.trim(), estSalary: Math.round(input.estSalary), feePct: Math.round(input.feePct), stage: input.stage ?? "first_meeting", ownerId: owner?.id }).returning())[0];
+}
+export async function setDealStage(id: number, stage: s.DealStage) { await (await getDb()).update(s.deals).set({ stage }).where(eq(s.deals.id, id)); }
+
+export async function addAgreement(input: { companyName: string; feePct: number; guaranteeDays: number; status: "draft" | "sent" | "signed" }) {
+  const db = await getDb();
+  const company = await companyByName(input.companyName);
+  if (input.status === "signed") await db.update(s.companies).set({ status: "client" }).where(eq(s.companies.id, company.id));
+  return (await db.insert(s.agreements).values({ companyId: company.id, kind: "Direct-hire (contingency)", feePct: Math.round(input.feePct) || 20, guaranteeDays: Math.round(input.guaranteeDays) || 90, status: input.status, provider: "PandaDoc", signedAt: input.status === "signed" ? new Date() : null }).returning())[0];
+}
+export async function setAgreementStatus(id: number, status: "draft" | "sent" | "signed") {
+  const db = await getDb();
+  const [a] = await db.update(s.agreements).set({ status, signedAt: status === "signed" ? new Date() : null }).where(eq(s.agreements.id, id)).returning();
+  if (a && status === "signed") await db.update(s.companies).set({ status: "client" }).where(eq(s.companies.id, a.companyId));
+}
+
+export async function addPlacement(input: { companyName: string; roleTitle: string; salary: number; feePct: number; startDate?: string }) {
+  const db = await getDb();
+  if (!input.roleTitle.trim() || !(input.salary > 0)) throw new Error("A placement needs a role and a salary");
+  const company = await companyByName(input.companyName);
+  return (await db.insert(s.placements).values({ companyId: company.id, roleTitle: input.roleTitle.trim(), salary: Math.round(input.salary), feePct: Math.round(input.feePct) || 20, startDate: input.startDate ? new Date(`${input.startDate}T12:00:00`) : null }).returning())[0];
+}
+export async function setInvoiceStatus(id: number, status: s.InvoiceStatus) {
+  await (await getDb()).update(s.placements).set({ invoiceStatus: status, dueDate: status === "invoiced" ? new Date(Date.now() + 30 * DAY) : undefined }).where(eq(s.placements.id, id));
+}
+
+// ---------- Things a Claude run reports back ----------
+
+/** Keep the latest weekly review so it shows on the Numbers screen. */
+export async function saveWeeklyReview(text: string) {
+  const db = await getDb();
+  const value = { text: text.trim(), savedAt: new Date().toISOString() };
+  await db.insert(s.settings).values({ key: "weekly_review", value }).onConflictDoUpdate({ target: s.settings.key, set: { value } });
+  return value;
+}
+
+/**
+ * Record that someone replied (found in Gmail by a Claude run, or noticed by hand). This is what
+ * stops the app from suggesting a follow-up to a person who has already answered.
+ */
+export async function logReply(input: { personId: number; channel: "email" | "linkedin" | "text"; summary: string; searchId?: number; interested?: boolean }) {
+  const db = await getDb();
+  const [person] = await db.select().from(s.people).where(eq(s.people.id, input.personId));
+  if (!person) throw new Error(`No person with id ${input.personId}`);
+  await db.insert(s.activities).values({ type: input.channel, outcome: "replied", personId: person.id, companyId: person.companyId, searchId: input.searchId, notes: input.summary });
+  if (input.searchId) {
+    const [link] = await db.select().from(s.searchCandidates).where(and(eq(s.searchCandidates.searchId, input.searchId), eq(s.searchCandidates.personId, person.id)));
+    if (link && input.interested === false) await db.update(s.searchCandidates).set({ stage: "rejected", fitNotes: `Not interested: ${input.summary}`.slice(0, 300) }).where(eq(s.searchCandidates.id, link.id));
+  }
+  return { person: person.name, logged: true };
+}
+
+/** Save the one-page brief for a company, shown at the top of its page. */
+export async function saveCompanyBrief(companyId: number, brief: string) {
+  const [c] = await (await getDb()).update(s.companies).set({ brief: brief.trim() }).where(eq(s.companies.id, companyId)).returning();
+  if (!c) throw new Error(`No company with id ${companyId}`);
+  return { company: c.name, saved: true };
 }

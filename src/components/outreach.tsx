@@ -17,6 +17,7 @@ export function CandidateOutreach({ person: p, searchId, feeler, retellLive, com
   const [busy, start] = useTransition();
   const [done, setDone] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [asked, setAsked] = useState(false);
   const form = (fields: Record<string, string | number>) => { const f = new FormData(); Object.entries(fields).forEach(([k, v]) => f.set(k, String(v))); return f; };
   const log = (channel: string, label: string) => start(async () => { await outreachAction(form({ personId: p.id, searchId, channel })); setDone(label); });
   const copy = async (text: string) => { try { await navigator.clipboard.writeText(text); } catch { /* clipboard blocked: the tab still opens */ } };
@@ -29,8 +30,15 @@ export function CandidateOutreach({ person: p, searchId, feeler, retellLive, com
       {p.linkedinUrl && st === "connected" && (
         <button className="btn btn-primary" title="Copies the message, opens their profile and logs it. Paste it into a LinkedIn message and send." onClick={async () => { await copy(feeler.message); open(p.linkedinUrl!); log("linkedin_message", "LinkedIn message copied") }}>Message on LinkedIn</button>
       )}
-      {p.linkedinUrl && (st === "none" || st === "queued" || st === "note_ready") && (
-        <button className="btn btn-primary" title={`Copies this note (${feeler.note.length} of 300 characters), opens their profile and marks the request as sent. Press Connect there and paste the note.`} onClick={async () => { await copy(feeler.note); open(p.linkedinUrl!); log("linkedin_connect", "Note copied, request marked sent") }}>Connect with role note</button>
+      {p.linkedinUrl && (st === "none" || st === "queued" || st === "note_ready") && !asked && (
+        <button className="btn btn-primary" title={`Copies this note (${feeler.note.length} of 300 characters) and opens their profile. Press Connect there and paste the note.`} onClick={async () => { await copy(feeler.note); open(p.linkedinUrl!); setAsked(true); }}>Connect with role note</button>
+      )}
+      {asked && st !== "sent" && st !== "connected" && (
+        <span className="inline-flex items-center gap-1.5 rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-900">
+          Note copied. Did you send the request?
+          <button className="btn btn-primary" onClick={() => { setAsked(false); log("linkedin_connect", "Request logged as sent"); }}>Yes, sent</button>
+          <button className="btn" onClick={() => setAsked(false)}>Not yet</button>
+        </span>
       )}
       {p.linkedinUrl && st === "sent" && (
         <>

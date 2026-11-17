@@ -10,7 +10,7 @@ export default async function Connections({ searchParams }: { searchParams: Prom
   const by = (st: string) => queue.filter((r) => r.person.connectionStatus === st);
   return (
     <>
-      <PageHeader title="Connection queue" sub="Tick Connect?, Claude writes the note, you copy it and send the request yourself on LinkedIn. Nothing here touches your LinkedIn account." />
+      <PageHeader title="Connection queue" sub="People to connect with on LinkedIn. Connect opens their profile and you send the request yourself; Draft note first has Claude write a note to go with it. Nothing here touches your LinkedIn account." />
       {q.error && <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{q.error}</div>}
       {q.checked && <div className="mb-4 rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-900">{q.checked}</div>}
       <h2 className="mb-2 text-sm font-semibold">Ready to send ({by("note_ready").length})</h2>

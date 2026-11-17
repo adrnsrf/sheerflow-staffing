@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { ApolloError, apolloAccountsInList } from "@/connectors/apollo";
 import fs from "node:fs";
@@ -8,6 +9,7 @@ import path from "node:path";
 import * as core from "@/core";
 import * as imports from "@/core/imports";
 import * as candidates from "@/core/candidates";
+import { startClaudeRun } from "@/core/claude-runner";
 import * as context from "@/core/context";
 import * as outreach from "@/core/outreach";
 import { DIMENSIONS, type Source } from "@/core/candidate-schema";
@@ -15,7 +17,7 @@ import { getRole, saveRole } from "@/core/matching";
 import * as signals from "@/core/signals";
 import * as staffing from "@/core/staffing";
 import { IMPORTS_DIR } from "@/db/client";
-import type { CallOutcome, CandidateSourceKind, CandidateStage, ConnectionStatus, ContextKind, JobPostingStatus, SignalStatus, StaffingStatus } from "@/db/schema";
+import type { CallOutcome, CandidateSourceKind, CandidateStage, ConnectionStatus, ContextKind, DealStage, InvoiceStatus, JobPostingStatus, SignalStatus, StaffingStatus } from "@/db/schema";
 
 // Server actions: what the buttons call. Each one is a thin wrapper around src/core.
 const num = (f: FormData, k: string) => Number(f.get(k));
@@ -23,7 +25,7 @@ const str = (f: FormData, k: string) => (f.get(k) as string | null)?.trim() || u
 const done = () => revalidatePath("/", "layout");
 
 export async function signalAction(f: FormData) { await core.setSignalStatus(num(f, "id"), f.get("status") as SignalStatus); done(); }
-export async function logCallAction(f: FormData) { await core.logCall({ queueId: num(f, "queueId"), outcome: f.get("outcome") as CallOutcome, phoneNumberId: num(f, "phoneNumberId") || undefined, notes: str(f, "notes") }); done(); }
+export async function logCallAction(f: FormData) { await core.logCall({ queueId: num(f, "queueId"), outcome: f.get("outcome") as CallOutcome, phoneNumberId: num(f, "phoneNumberId") || undefined, notes: str(f, "notes"), userId: num(f, "userId") || undefined }); done(); }
 export async function addToCallListAction(f: FormData) { await core.addToCallList(num(f, "companyId"), { addedBy: "Account page" }); done(); }
 export async function queueConnectionAction(f: FormData) { await core.queueConnection(num(f, "personId")); done(); }
 export async function saveNoteAction(f: FormData) { await core.saveConnectionNote(num(f, "personId"), str(f, "note") ?? ""); done(); }
@@ -85,6 +87,17 @@ export async function addStaffingAction(f: FormData) {
   done();
 }
 
+/** An import result in plain words, leaving out anything that was zero. */
+function importSentence(r: Record<string, number>) {
+  const say: [string, (n: number) => string][] = [
+    ["added", (n) => `${n} new`], ["updated", (n) => `${n} updated from the sheet`], ["unchanged", (n) => `${n} already here and unchanged`], ["alreadyThere", (n) => `${n} already here`],
+    ["companiesAdded", (n) => `${n} new compan${n === 1 ? "y" : "ies"}`], ["peopleAdded", (n) => `${n} new ${n === 1 ? "person" : "people"}`], ["callsLogged", (n) => `${n} past call${n === 1 ? "" : "s"} read from the notes`],
+    ["matchedToAccounts", (n) => `${n} matched to companies you already have`], ["staffingDropped", (n) => `${n} from staffing firms left out`], ["dismissedNonUs", (n) => `${n} outside the US set aside`], ["skipped", (n) => `${n} skipped for missing details`],
+  ];
+  const parts = say.filter(([k]) => r[k] > 0).map(([k, f]) => f(r[k]));
+  return `Read ${r.rows} row${r.rows === 1 ? "" : "s"}: ${parts.join(", ") || "nothing new"}.`;
+}
+
 const IMPORTERS = { "call-list": imports.importCallSheet, "hiring-posts": imports.importHiringPosts, "job-alerts": imports.importJobAlerts } as const;
 export type ImportKind = keyof typeof IMPORTERS;
 
@@ -98,7 +111,7 @@ export async function importAction(f: FormData) {
     if (upload instanceof File && upload.size > 0) rows = imports.csvToRows(await upload.text(), kind === "call-list" ? "Company" : kind === "hiring-posts" ? "Post ID" : "jobId");
     else rows = JSON.parse(fs.readFileSync(path.join(IMPORTS_DIR, `${kind}.json`), "utf8"));
     const r = await IMPORTERS[kind](rows);
-    query = new URLSearchParams({ done: kind, result: Object.entries(r).map(([k, v]) => `${k}: ${v}`).join(", ") }).toString();
+    query = new URLSearchParams({ done: kind, result: importSentence(r as unknown as Record<string, number>) }).toString();
   } catch (e) {
     query = new URLSearchParams({ error: e instanceof Error ? e.message : String(e) }).toString();
   }
@@ -122,7 +135,7 @@ export async function connectionsUploadAction(f: FormData) {
 }
 
 /** Change how much a kind of signal counts, and how fast it fades. */
-export async function signalTypeAction(f: FormData) { await signals.updateSignalType(str(f, "type") ?? "", num(f, "weight"), num(f, "halfLifeDays")); done(); }
+export async function signalTypeAction(f: FormData) { await signals.updateSignalType(str(f, "type") ?? "", num(f, "weight"), num(f, "halfLifeDays")); done(); redirect(`/system/scoring?saved=${encodeURIComponent(str(f, "label") ?? "Saved")}`); }
 
 // Candidates and roles
 const back = (path: string, e: unknown) => `${path}${path.includes("?") ? "&" : "?"}error=${encodeURIComponent(e instanceof Error ? e.message : String(e))}`;
@@ -206,3 +219,42 @@ export async function screenCallAction(f: FormData): Promise<{ message?: string;
   } catch (e) { return { error: e instanceof Error ? e.message : String(e) }; }
 }
 export async function refreshScreenCallAction(f: FormData) { await outreach.refreshScreenCall(num(f, "id")); done(); }
+
+// Claude runs
+/** Start Claude Code on this computer to work the queue. */
+export async function runClaudeAction() {
+  let target = "/system/claude?run=started";
+  try {
+    const h = await headers();
+    await startClaudeRun(`${h.get("x-forwarded-proto") ?? "http"}://${h.get("host") ?? "localhost:3000"}`);
+  } catch (e) { target = `/system/claude?error=${encodeURIComponent(e instanceof Error ? e.message : String(e))}`; }
+  done();
+  redirect(target);
+}
+export async function cancelJobAction(f: FormData) { await core.cancelJob(num(f, "id")); done(); }
+
+// Business side: add and move things by hand
+const tryTo = async (path: string, fn: () => Promise<unknown>) => { let target = path; try { await fn(); } catch (e) { target = back(path, e); } done(); redirect(target); };
+export async function addDealAction(f: FormData) { await tryTo("/bd/pipeline", () => core.addDeal({ companyName: str(f, "company") ?? "", roleTitle: str(f, "role") ?? "", estSalary: num(f, "salary"), feePct: num(f, "fee"), stage: (str(f, "stage") ?? "first_meeting") as DealStage })); }
+export async function dealStageAction(f: FormData) { await core.setDealStage(num(f, "id"), f.get("stage") as DealStage); done(); }
+export async function addAgreementAction(f: FormData) { await tryTo("/manage/clients", () => core.addAgreement({ companyName: str(f, "company") ?? "", feePct: num(f, "fee"), guaranteeDays: num(f, "guarantee"), status: (str(f, "status") ?? "draft") as "draft" | "sent" | "signed" })); }
+export async function agreementStatusAction(f: FormData) { await core.setAgreementStatus(num(f, "id"), f.get("status") as "draft" | "sent" | "signed"); done(); }
+export async function addPlacementAction(f: FormData) { await tryTo("/manage/money", () => core.addPlacement({ companyName: str(f, "company") ?? "", roleTitle: str(f, "role") ?? "", salary: num(f, "salary"), feePct: num(f, "fee"), startDate: str(f, "start") })); }
+export async function invoiceStatusAction(f: FormData) { await core.setInvoiceStatus(num(f, "id"), f.get("status") as InvoiceStatus); done(); }
+
+/** Save a role's requirements from the row-by-row form (no JSON). The team style is kept as it is. */
+export async function saveRequirementsAction(f: FormData) {
+  const id = num(f, "id");
+  const role = await getRole(id);
+  if (role) {
+    const count = num(f, "count");
+    const tools = Array.from({ length: count }, (_, i) => i).filter((i) => !f.get(`x_${i}`)).map((i) => ({ name: str(f, `n_${i}`) ?? "", minYears: Math.max(0, num(f, `y_${i}`) || 0), must: f.get(`m_${i}`) === "must" })).filter((x) => x.name);
+    if (str(f, "new_name")) tools.push({ name: str(f, "new_name")!, minYears: Math.max(0, num(f, "new_years") || 1), must: f.get("new_must") === "must" });
+    const size = str(f, "companySize"), wp = str(f, "workplace");
+    await saveRole({ id, title: role.title, clientName: role.clientName ?? undefined, companyId: role.companyId ?? undefined, description: str(f, "description") ?? role.description ?? "", requirements: {
+      tools, minTotalYears: num(f, "minTotalYears") || undefined, companySize: (size || undefined) as never, workplace: (wp || undefined) as never, city: str(f, "city"), state: str(f, "state"), maxBase: num(f, "maxBase") ? num(f, "maxBase") * 1000 : undefined, style: role.requirements?.style,
+    } });
+  }
+  done();
+  redirect(`/sourcing/searches/${id}`);
+}

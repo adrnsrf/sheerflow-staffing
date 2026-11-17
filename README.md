@@ -23,21 +23,25 @@ with sample data. To wipe it and start again, stop the app and run:
 npm run db:reset
 ```
 
-## Connect Claude
+## Claude does the work behind the buttons
 
-The app is a tool Claude uses; it never calls Claude, so it runs on your subscription and needs
-no API key. With the app running, open this folder in Claude Code. It picks up `.mcp.json` and
-offers the `sheerflow` connection. Or add it by hand:
+Buttons such as "Ask Claude to draft the follow-up" add a job to Claude's list. The button then
+reads "Queued for Claude", and asking twice does not queue it twice. Jobs wait until Claude runs.
 
-```bash
-claude mcp add --transport http sheerflow http://localhost:3000/api/mcp
-```
+- **Run Claude now** (Claude screen) starts Claude Code on this computer, pointed at this app,
+  and works up to ten waiting jobs. It uses the Claude account Claude Code is signed in to: no
+  API key, no per-use bill. The screen shows the run in progress, what each job produced, and
+  Claude's summary.
+- **On a schedule**: have a scheduled task call `curl -X POST http://localhost:3000/api/claude/run`
+  while the app is running.
+- **What a run may use**: this app's tools and web search. To let runs read Gmail or Apollo, add
+  the names of those read-only tools to `CLAUDE_EXTRA_TOOLS` in `.env.local` (comma separated).
+  Never add a tool that sends or spends.
+- **Chat with your data**: connect Claude Code once with
+  `claude mcp add --transport http sheerflow http://localhost:3000/api/mcp`, then ask it things.
 
-Then ask things like "what are the hottest new signals in SheerFlow?" or "work the queued
-SheerFlow jobs". The Claude screen in the app lists the queue and what Claude may do.
-
-Claude Duet and Cowork can only reach the app once it is hosted at a public address (with a
-login in front of it). On your own machine, Claude Code is the way to test.
+The app itself never calls Claude's API. Claude Duet and Cowork can only reach the app once it is
+hosted at a public address with a login in front of it.
 
 ## How it is put together
 
@@ -60,6 +64,7 @@ src/core/             All the rules, in one place.
   decisions.ts        The rules that turn scores into Next actions.
 context/              Shipped skills and routines, as Markdown. Copied into the database on start.
 models/               The transformation layer: one SQL SELECT per file, built as database views.
+  claude-runner.ts    Starts a Claude Code run against the job queue and records the result.
 src/app/              The screens. Buttons call src/app/actions.ts, which calls src/core.
 src/mcp/server.ts     The tools Claude gets. Each one calls the same src/core function a button does.
 src/connectors/       One entry per outside tool (Apollo, Gmail, Sheets, ...). Apollo goes live with a key; the rest are sample mode.
@@ -99,11 +104,11 @@ credits. Do-not-contact companies cannot be put on the call list. Connection not
 | Connection queue | Tick Connect?, edit note, copy and open profile, mark sent / connected | Notes are written by a Claude run |
 | Accounts | List, search, one-page account view with every touch | Briefs come from the company-research skill |
 | Outreach drafts | Review, approve, copy | Push to Gmail drafts or an Apollo sequence |
-| Pipeline | Stages with fee forecast | Moving deals between stages |
+| Deals, clients, money | Add by hand, move stages, mark agreements signed and invoices paid | PandaDoc, Docusign and QuickBooks data |
 | Sourcing | Candidate profiles, personality scales, raw sources, vector search, roles, matching with reasons, one-click outreach, candidate actions, pipeline stages | Application form, live Retell calls, reply tracking, submittal packets |
-| Management | Agreements, money, KPIs, vendor scorecard, credit budget | PandaDoc / Docusign / QuickBooks data, real targets |
+| Numbers | Weekly funnel against targets, saved weekly review, vendor view, credit budget | Targets and vendor cost are placeholders to edit |
 | Signals | Scored signal model, Next actions with reasons, editable weights | Apollo intent and Apollo job postings have no data until the routine runs |
-| Claude | 44 MCP tools, job queue, AI context store | Routines moved over to write here instead of the sheets |
+| Claude | 47 tools, job queue with a Run button, editable instructions | Scheduled runs need a scheduled task; Gmail and Apollo in runs need their tools allowed |
 | Logins | None: one local user | Supabase login for reps and D Foster |
 
 ## Real data: imports
