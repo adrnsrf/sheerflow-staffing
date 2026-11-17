@@ -151,6 +151,12 @@ export default async function Candidate({ params, searchParams }: { params: Prom
           </details>
         </div>
         <div className="space-y-6">
+          {check.missing.length > 0 && (
+            <section className="card p-4 text-sm">
+              <h2 className="mb-2 text-sm font-semibold">Still missing</h2>
+              <ul className="space-y-2">{check.missing.map((m) => <li key={m.field}><div className="font-medium">{m.field}</div><div className="muted text-xs">Usually from: {m.fill}</div></li>)}</ul>
+            </section>
+          )}
           {reach && (
             <section className="card p-4 text-sm">
               <h2 className="text-sm font-semibold">Reach out</h2>
@@ -195,12 +201,7 @@ export default async function Candidate({ params, searchParams }: { params: Prom
               ))}
             </dl>
           </section>
-          {check.missing.length > 0 && (
-            <section className="card p-4 text-sm">
-              <h2 className="mb-2 text-sm font-semibold">Still missing</h2>
-              <ul className="space-y-2">{check.missing.map((m) => <li key={m.field}><div className="font-medium">{m.field}</div><div className="muted text-xs">Usually from: {m.fill}</div></li>)}</ul>
-            </section>
-          )}
+
           <section className="card">
             <h2 className="border-b border-stone-200 px-4 py-3 text-sm font-semibold">Best-fitting open roles</h2>
             {roles.length === 0 && <p className="muted p-4 text-sm">No open roles.</p>}

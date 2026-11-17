@@ -10,6 +10,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import * as core from "@/core";
 import { getNextActions } from "@/core/decisions";
+import * as history from "@/core/history";
 import * as imports from "@/core/imports";
 import * as signals from "@/core/signals";
 import { getCandidateActions } from "@/core/candidate-actions";
@@ -162,6 +163,11 @@ export function buildMcpServer() {
     description: "The ranked list of what Adrian should do next and why: who to connect with, message, call or add to the call list. Each action names the rule and the signals behind it.", annotations: read,
     inputSchema: { limit: z.number().default(15), kind: z.enum(["follow_up", "message", "send_request", "connect", "call", "add_to_call_list", "research", "find_contact"]).optional() },
   }, safe(async (a) => (await getNextActions({ limit: a.limit, kind: a.kind })).map((x) => ({ action: x.headline, kind: x.kind, when: x.when, score: x.score, why: x.why, company: x.company, person: x.person && { id: x.person.id, name: x.person.name, title: x.person.title, linkedin: x.person.linkedinUrl }, queueId: x.queueId }))));
+
+  server.registerTool("get_outreach_progress", {
+    description: "Everyone who has already been contacted and where each stands: 'answer' (they responded), 'due' (time for the next step), 'waiting' (nothing to do yet) or 'finished'. Includes how many contacts, the last channel and date, and the next step. Check this before suggesting or drafting outreach, so nobody is contacted twice.", annotations: read,
+    inputSchema: { standing: z.enum(["answer", "due", "waiting", "finished"]).optional(), limit: z.number().default(40) },
+  }, safe(async (a) => (await history.listProgress({ days: 90 })).filter((r) => !a.standing || r.standing === a.standing).slice(0, a.limit).map((r) => ({ personId: r.personId, name: r.name, company: r.company, candidate: r.type === "candidate", standing: r.standing, contacts: r.contacts, lastChannel: r.lastChannel, lastContact: r.lastContactAt, lastOutcome: r.lastOutcome, next: r.next, due: r.dueAt }))));
 
   server.registerTool("get_signals", { description: "Every scored signal for one company (its own and its people's), strongest first, with the company's heat, fit and priority.", annotations: read, inputSchema: { company_id: z.number() } },
     safe(async (a) => ({ heat: await signals.companyHeat(a.company_id), signals: (await signals.companySignals(a.company_id)).map((f) => ({ type: f.type_label, level: f.level, title: f.title, detail: f.detail, source: f.source, date: f.occurred_at, score: f.score, url: f.url })) })));

@@ -34,7 +34,7 @@ export default async function Jobs({ searchParams }: { searchParams: Promise<{ s
                   <td className="muted">{job.location}{job.workplace && ` · ${job.workplace}`}</td>
                   <td className="muted whitespace-nowrap text-xs">{rel(job.receivedAt)}<div>{job.alertKind}</div></td>
                   <td className="whitespace-nowrap text-right">
-                    {status !== "kept" && <Act action={jobPostingAction} fields={{ id: job.id, status: "promote" }} className="btn btn-primary" title="Creates the account if needed and adds a signal to the inbox">Make it a signal</Act>}{" "}
+                    {status !== "kept" && <Act action={jobPostingAction} fields={{ id: job.id, status: "promote" }} className="btn btn-primary" title="Adds the company if it is new and puts this posting in New leads">Add to leads</Act>}{" "}
                     {status !== "dismissed" && <Act action={jobPostingAction} fields={{ id: job.id, status: "dismissed" }} className="btn btn-danger">Dismiss</Act>}
                     {status === "dismissed" && <Act action={jobPostingAction} fields={{ id: job.id, status: "new" }}>Restore</Act>}
                   </td>

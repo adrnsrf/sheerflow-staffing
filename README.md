@@ -28,8 +28,10 @@ npm run db:reset
 Buttons such as "Ask Claude to draft the follow-up" add a job to Claude's list. The button then
 reads "Queued for Claude", and asking twice does not queue it twice. Jobs wait until Claude runs.
 
+- **Hand Claude a batch** (Claude screen) queues the top of your to-do list in one press:
+  follow-up drafts, connection notes, company briefs, phone research.
 - **Run Claude now** (Claude screen) starts Claude Code on this computer, pointed at this app,
-  and works up to ten waiting jobs. It uses the Claude account Claude Code is signed in to: no
+  and works up to fifteen waiting jobs per run. It uses the Claude account Claude Code is signed in to: no
   API key, no per-use bill. The screen shows the run in progress, what each job produced, and
   Claude's summary.
 - **On a schedule**: have a scheduled task call `curl -X POST http://localhost:3000/api/claude/run`
@@ -108,7 +110,7 @@ credits. Do-not-contact companies cannot be put on the call list. Connection not
 | Sourcing | Candidate profiles, personality scales, raw sources, vector search, roles, matching with reasons, one-click outreach, candidate actions, pipeline stages | Application form, live Retell calls, reply tracking, submittal packets |
 | Numbers | Weekly funnel against targets, saved weekly review, vendor view, credit budget | Targets and vendor cost are placeholders to edit |
 | Signals | Scored signal model, Next actions with reasons, editable weights | Apollo intent and Apollo job postings have no data until the routine runs |
-| Claude | 47 tools, job queue with a Run button, editable instructions | Scheduled runs need a scheduled task; Gmail and Apollo in runs need their tools allowed |
+| Claude | 48 tools, job queue with a Run button, editable instructions | Scheduled runs need a scheduled task; Gmail and Apollo in runs need their tools allowed |
 | Logins | None: one local user | Supabase login for reps and D Foster |
 
 ## Real data: imports
@@ -300,6 +302,32 @@ removes them.
 Not built or not proven yet: a public application form; pulling applications from LinkedIn job
 posts; replies (the app cannot see a LinkedIn or email reply, so "no reply" means none was
 logged); and the Retell connection, which is written but has never been run against Retell.
+
+## Outreach over time
+
+Every touch is one row in the `outreach_touches` view: calls from the call log, LinkedIn
+requests, emails, texts and meetings from activities, and anything Claude prepared for a person.
+`person_outreach` rolls that up per person.
+
+- **In progress** (To do, In progress) lists everyone already contacted in four groups: they
+  responded, due for the next step, waiting on them, finished for now. Each row shows the
+  touches as dots, the last contact, and the next step with its date.
+- **The waits** live in `src/core/history.ts`: 7 days for a LinkedIn request, 5 days for a reply
+  to an email or message, 2 days before calling back, and after 4 tries with no answer the
+  person rests for 30 days.
+- **Activity** is the same touches as a day-by-day feed.
+- **Already worked** markers ("Email 3 days ago · 2x") appear beside names on People,
+  Candidates and To do, and To do shows today's count against a daily plan and LinkedIn's
+  weekly limit.
+
+History read from the old call sheet counts as contact, but not toward today's numbers.
+
+## Backup
+
+Settings, Import, Backup downloads everything in the app as one file, and restores from one.
+Restore replaces all data in a single step: if the file cannot be read in full, nothing changes.
+Search vectors are rebuilt after a restore. Use it to keep copies and to move work between
+computers. The file contains real contact data; treat it like the sheets.
 
 ## Staffing firms
 
