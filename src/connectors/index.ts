@@ -6,6 +6,7 @@
  */
 
 import { apolloConfigured, apolloLists } from "./apollo";
+import { retellConfigured } from "./retell";
 
 export type ConnectorMode = "live" | "sample" | "manual" | "via_claude" | "later";
 
@@ -49,7 +50,11 @@ export const getConnectors = (): Connector[] => [
   },
   { id: "linkedin", name: "LinkedIn", how: "Manual only", usedFor: "Profile links, connection queue; no scraping or auto-sending", mode: "manual", envVars: [] },
   { id: "google-search", name: "Google search", how: "Through Claude runs", usedFor: "Finding hiring posts", mode: "via_claude", envVars: [] },
-  { id: "dialer", name: "Dialer (Retell, Twilio or Aircall)", how: "API, later", usedFor: "Click-to-call, recordings, outcomes", mode: "later", envVars: ["DIALER_API_KEY"] },
+  {
+    id: "retell", name: "Retell AI", how: "API", usedFor: "AI screen calls to candidates who agreed to one; transcript comes back into the profile", mode: retellConfigured() ? "live" : "sample", envVars: ["RETELL_API_KEY", "RETELL_AGENT_ID", "RETELL_FROM_NUMBER"],
+    test: async () => (retellConfigured() ? "Live: keys are set. No call is placed by this test." : "Sample: no keys set. The AI screen call button records the request and shows what the screener would be told, but places no call."),
+  },
+  { id: "dialer", name: "Dialer for the sales team (Twilio or Aircall)", how: "API, later", usedFor: "Click-to-call, recordings, outcomes", mode: "later", envVars: ["DIALER_API_KEY"] },
   {
     id: "esign", name: "PandaDoc or Docusign", how: "Connector", usedFor: "Agreements", mode: "sample", envVars: ["PANDADOC_API_KEY"],
     test: async () => "Sample: 2 signed agreements, 1 sent and waiting, 1 draft.",

@@ -100,10 +100,10 @@ credits. Do-not-contact companies cannot be put on the call list. Connection not
 | Accounts | List, search, one-page account view with every touch | Briefs come from the company-research skill |
 | Outreach drafts | Review, approve, copy | Push to Gmail drafts or an Apollo sequence |
 | Pipeline | Stages with fee forecast | Moving deals between stages |
-| Sourcing | Candidate profiles, raw sources, vector search, roles, matching with reasons, pipeline stages | Application form, Retell AI call, submittal packets |
+| Sourcing | Candidate profiles, personality scales, raw sources, vector search, roles, matching with reasons, one-click outreach, candidate actions, pipeline stages | Application form, live Retell calls, reply tracking, submittal packets |
 | Management | Agreements, money, KPIs, vendor scorecard, credit budget | PandaDoc / Docusign / QuickBooks data, real targets |
 | Signals | Scored signal model, Next actions with reasons, editable weights | Apollo intent and Apollo job postings have no data until the routine runs |
-| Claude | 42 MCP tools, job queue, AI context store | Routines moved over to write here instead of the sheets |
+| Claude | 44 MCP tools, job queue, AI context store | Routines moved over to write here instead of the sheets |
 | Logins | None: one local user | Supabase login for reps and D Foster |
 
 ## Real data: imports
@@ -265,12 +265,36 @@ closest part and shows which part matched. The model is small: it is reliable fo
 work someone does and weaker on fine shades of personality. To change models, edit
 `src/core/embeddings.ts` and re-save the profiles.
 
+**One-click outreach.** Every candidate has the same buttons, on the Candidate actions screen,
+on each role's matches and on the candidate's own page:
+
+- **Connect with role note** copies a note of 300 characters or fewer about the role, opens
+  their LinkedIn profile and marks the request sent. If you are already connected it is
+  **Message on LinkedIn** instead.
+- **Email** opens Gmail with the subject and body written; you press Send there.
+- **Text** copies the text and opens your messaging app with it filled in.
+- **AI screen call** asks Retell to call them with a brief built from the role. It is the only
+  button that acts by itself, so it is locked until the candidate's consent to an automated
+  call is recorded on their profile (US rules require prior consent for AI-voice calls and
+  automated texts). Without Retell keys it records the request and places no call.
+
+The words come from a template in `src/core/outreach.ts` that uses the candidate's matching
+tools and the role's stack, setting and pay, and never names the client. Each press logs the
+touch, puts the person in the role's pipeline and moves them to "contacted".
+
+**Candidate actions** is the candidate-side to-do list, built by rules in
+`src/core/candidate-actions.ts`: reach out to strong matches nobody has contacted (each person
+is pitched their best role only), nudge once after five days without a reply, start a screen
+when they have agreed to a call, check a call that is out, submit after a screen if the match
+is still strong, and compile profiles with new material.
+
 **Sample data.** 24 made-up candidates and 7 made-up roles load on first run so search and
 matching can be tried. They are labelled "Sample" and one button on the Candidates screen
 removes them.
 
-Not built yet: a public application form, the Retell AI call itself (its transcript is pasted
-or sent in by a Claude run for now), and pulling applications from LinkedIn job posts.
+Not built or not proven yet: a public application form; pulling applications from LinkedIn job
+posts; replies (the app cannot see a LinkedIn or email reply, so "no reply" means none was
+logged); and the Retell connection, which is written but has never been run against Retell.
 
 ## Staffing firms
 

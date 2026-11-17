@@ -26,7 +26,7 @@ export function candidatesReady() {
     const { sampleCandidates, SAMPLE_ROLES } = await import("@/db/sample-candidates");
     const { saveRole } = await import("./matching");
     for (const c of sampleCandidates()) {
-      const { person } = await upsertPerson({ name: c.name, linkedinUrl: c.linkedinUrl, email: c.email, type: "candidate" });
+      const { person } = await upsertPerson({ name: c.name, linkedinUrl: c.linkedinUrl, email: c.email, phone: c.phone, type: "candidate", aiContactConsent: !!c.consentNote, consentNote: c.consentNote });
       for (const src of c.sources) await db.insert(s.candidateSources).values({ personId: person.id, kind: src.kind, title: src.title, content: src.content, compiledAt: new Date() });
       await saveCandidateProfile(person.id, c.profile, { isSample: true });
     }

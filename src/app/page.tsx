@@ -2,11 +2,12 @@ import Link from "next/link";
 import { addTaskAction, taskDoneAction } from "@/app/actions";
 import { Act, Badge, PageHeader, SampleNote, Stat } from "@/components/ui";
 import { getKpis, getOverview, listTasks, listUsers } from "@/core";
+import { getCandidateActions } from "@/core/candidate-actions";
 import { getNextActions } from "@/core/decisions";
 import { isDue, rel } from "@/lib/format";
 
 export default async function Today() {
-  const [o, tasks, actions, [week], users] = await Promise.all([getOverview(), listTasks({ openOnly: true }), getNextActions({ limit: 6 }), getKpis({ weeks: 1 }), listUsers()]);
+  const [o, tasks, actions, [week], users, candidateActions] = await Promise.all([getOverview(), listTasks({ openOnly: true }), getNextActions({ limit: 5 }), getKpis({ weeks: 1 }), listUsers(), getCandidateActions({ limit: 4 })]);
   return (
     <>
       <PageHeader title="Today" sub="What's hot and what's next, across business development, sourcing and the business." />
@@ -50,6 +51,20 @@ export default async function Today() {
                 <li key={a.key} className="border-b border-stone-100 px-4 py-2.5 text-sm last:border-b-0">
                   <div className="flex items-center justify-between gap-2"><Link href="/bd/actions" className="truncate font-medium hover:underline">{a.headline}</Link><Badge tone={a.when === "Today" ? "amber" : "gray"}>{a.when}</Badge></div>
                   <div className="muted truncate text-xs">{a.company.name} · {a.why[0]}</div>
+                </li>
+              ))}
+            </ul>
+          </section>
+          <section className="card">
+            <div className="flex items-center justify-between border-b border-stone-200 px-4 py-3">
+              <h2 className="text-sm font-semibold">Candidates to act on</h2><Link href="/sourcing/actions" className="text-xs font-medium text-brand hover:underline">All candidate actions</Link>
+            </div>
+            <ul>
+              {candidateActions.length === 0 && <li className="muted px-4 py-3 text-sm">Nothing yet. Open roles and candidates will put suggestions here.</li>}
+              {candidateActions.map((a) => (
+                <li key={a.key} className="border-b border-stone-100 px-4 py-2.5 text-sm last:border-b-0">
+                  <div className="flex items-center justify-between gap-2"><Link href="/sourcing/actions" className="truncate font-medium hover:underline">{a.headline}</Link><Badge tone={a.when === "Today" ? "amber" : "gray"}>{a.when}</Badge></div>
+                  <div className="muted truncate text-xs">{a.why[0]}</div>
                 </li>
               ))}
             </ul>

@@ -68,6 +68,13 @@ export const people = pgTable("people", {
   connectionNote: text("connection_note"),
   connectionRequestedAt: timestamp("connection_requested_at", { withTimezone: true }),
   connectedAt: timestamp("connected_at", { withTimezone: true }),
+  /**
+   * The person agreed to be called or texted by an automated screener. US rules require prior
+   * consent for AI-voice calls and automated texts to mobiles, so the AI call button stays
+   * locked until this is on, and `consentNote` says how and when they agreed.
+   */
+  aiContactConsent: boolean("ai_contact_consent").notNull().default(false),
+  consentNote: text("consent_note"),
   skills: text("skills"),
   notes: text("notes"),
   createdAt: created(),
@@ -172,7 +179,7 @@ export const callLog = pgTable("call_log", {
 });
 
 /** Touches other than calls: emails, LinkedIn, meetings, notes. Calls live in call_log. */
-export type ActivityType = "email" | "linkedin" | "meeting" | "note";
+export type ActivityType = "email" | "linkedin" | "text" | "screen_call" | "meeting" | "note";
 export const activities = pgTable("activities", {
   id: serial("id").primaryKey(),
   type: text("type").$type<ActivityType>().notNull(),
@@ -180,6 +187,8 @@ export const activities = pgTable("activities", {
   companyId: integer("company_id").references(() => companies.id),
   personId: integer("person_id").references(() => people.id),
   userId: integer("user_id").references(() => users.id),
+  /** The role this touch was about, for candidate outreach. */
+  searchId: integer("search_id"),
   notes: text("notes"),
   occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -284,6 +293,24 @@ export const candidateSources = pgTable("candidate_sources", {
   receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
   /** Set once the content has been worked into the profile. */
   compiledAt: timestamp("compiled_at", { withTimezone: true }),
+});
+
+export type ScreenCallStatus = "not_connected" | "requested" | "in_progress" | "completed" | "failed";
+/** An AI screen call (Retell) asked for from the app: who, for which role, and what came back. */
+export const screenCalls = pgTable("screen_calls", {
+  id: serial("id").primaryKey(),
+  personId: integer("person_id").notNull().references(() => people.id),
+  searchId: integer("search_id").references(() => searches.id),
+  status: text("status").$type<ScreenCallStatus>().notNull(),
+  toNumber: text("to_number"),
+  /** What the screener was told to cover: the role and the questions for it. */
+  brief: jsonb("brief").$type<Record<string, string>>().notNull().default({}),
+  providerCallId: text("provider_call_id"),
+  detail: text("detail"),
+  transcript: text("transcript"),
+  summary: text("summary"),
+  requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
 });
 
 export type CandidateStage = "sourced" | "contacted" | "screened" | "submitted" | "interview" | "offer" | "placed" | "rejected";

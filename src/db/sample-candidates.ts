@@ -98,7 +98,7 @@ const INTERESTS = [["trail running", "home espresso"], ["chess", "woodworking"],
 
 const SIZES_BY_LEVEL: Profile["experience"][number]["companySize"][][] = [["small", "mid"], ["mid", "large"], ["large", "enterprise"]];
 
-export type SampleCandidate = { name: string; linkedinUrl: string; email?: string; profile: Profile; sources: { kind: Source; title: string; content: string }[] };
+export type SampleCandidate = { name: string; linkedinUrl: string; email?: string; phone?: string; consentNote?: string; profile: Profile; sources: { kind: Source; title: string; content: string }[] };
 
 export function sampleCandidates(): SampleCandidate[] {
   const year = new Date().getFullYear();
@@ -150,7 +150,8 @@ export function sampleCandidates(): SampleCandidate[] {
     const sources: SampleCandidate["sources"] = [{ kind: "linkedin", title: "LinkedIn profile (pasted)", content: `${name}\n${profile.headline}\n${city}, ${state}\n\nExperience\n${profile.experience.map((e) => `${e.title}, ${e.company} (${e.start} to ${e.end ?? "present"})\n- ${e.responsibilities.join("\n- ")}`).join("\n\n")}\n\nSkills: ${k.skills.map((x) => x[0]).join(", ")}` }];
     if (applied) sources.push({ kind: "application", title: "Application form", content: `Work authorization: US citizen\nDesired base pay: $${profile.compensation.targetBase}\nNotice period: ${profile.availability.noticeWeeks} weeks\nOpen to: ${workplace}\nYears with ${k.skills[0][0]}: ${skills[0].years}\nYears with ${k.skills[1][0]}: ${skills[1].years}` });
     if (screened) sources.push({ kind: "screen_call", title: level === 1 ? "Retell AI screen call (summary and transcript excerpt)" : "Screen call with Adrian (notes)", content: `Summary: ${profile.screening!.summary}\n\nQ: How long have you worked with ${k.skills[0][0]}, and when did you last use it?\nA: About ${skills[0].years} years. I use it every day in my current role.\n\nQ: What kind of company do you do your best work in?\nA: ${style[2]}. What I want to avoid is ${style[3].toLowerCase()}.\n\nQ: What base pay would make you move?\nA: I'm at ${Math.round(base / 1000)}k now. I'd want around ${Math.round(profile.compensation.targetBase! / 1000)}k, and I would not move for less than ${Math.round(profile.compensation.minimumBase! / 1000)}k.` });
-    return { name, linkedinUrl: `https://www.linkedin.com/in/sample-${name.toLowerCase().replace(/[^a-z]+/g, "-")}`, email: applied ? `${first.toLowerCase()}@mail.example` : undefined, profile, sources };
+    return { name, linkedinUrl: `https://www.linkedin.com/in/sample-${name.toLowerCase().replace(/[^a-z]+/g, "-")}`, email: screened ? `${first.toLowerCase()}@mail.example` : undefined, phone: screened ? `(555) 555-01${String(i).padStart(2, "0")}` : undefined,
+      consentNote: applied ? "Ticked 'OK to call or text me about this role' on the application form" : undefined, profile, sources };
   }));
 }
 

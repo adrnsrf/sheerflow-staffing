@@ -12,6 +12,7 @@ import * as core from "@/core";
 import { getNextActions } from "@/core/decisions";
 import * as imports from "@/core/imports";
 import * as signals from "@/core/signals";
+import { getCandidateActions } from "@/core/candidate-actions";
 import * as candidates from "@/core/candidates";
 import * as context from "@/core/context";
 import * as matching from "@/core/matching";
@@ -85,6 +86,11 @@ export function buildMcpServer() {
     description: "Set some of a candidate's personality scales (1 to 5; see the compiling-candidate-profiles skill for what each end means) without rewriting the rest of the profile. Give evidence for each. Pass null to clear a scale. Only set what a source actually supports.",
     inputSchema: { person_id: z.number(), dimensions: z.object({ scope: scale, structure: scale, pace: scale, demeanor: scale, confidence: scale, teamwork: scale, audience: scale, leadership: scale }).partial().optional(), interests: z.array(z.string()).optional(), notes: z.string().optional() },
   }, safe(async (a) => candidates.updatePersonality(a.person_id, { dimensions: a.dimensions, interests: a.interests, notes: a.notes })));
+
+  server.registerTool("get_candidate_actions", {
+    description: "What to do next on the candidate side for open roles: who to reach out to, nudge, screen, check on or submit, each with the reason and a ready-to-send first message. Nothing here contacts anyone.", annotations: read,
+    inputSchema: { limit: z.number().default(15), role_id: z.number().optional() },
+  }, safe(async (a) => (await getCandidateActions({ limit: a.limit, searchId: a.role_id })).map((x) => ({ action: x.headline, kind: x.kind, when: x.when, why: x.why, candidate: { id: x.person.id, name: x.person.name, linkedin: x.person.linkedinUrl, hasEmail: !!x.person.email, hasPhone: !!x.person.phone, agreedToAiCall: x.person.aiContactConsent }, role: x.role, firstMessage: x.feeler?.message }))));
 
   server.registerTool("list_roles", { description: "The open roles being filled, each with its requirements.", annotations: read },
     safe(async () => { await candidates.candidatesReady(); return (await core.listSearches()).map((r) => ({ id: r.search.id, title: r.search.title, client: r.client, status: r.search.status, requirements: r.search.requirements, pipeline: r.stages })); }));

@@ -1,6 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { addSourceAction, compileCandidateAction, savePersonalityAction, saveProfileAction } from "@/app/actions";
+import { addSourceAction, compileCandidateAction, consentAction, refreshScreenCallAction, savePersonalityAction, saveProfileAction } from "@/app/actions";
+import { CandidateOutreach } from "@/components/outreach";
+import { retellConfigured } from "@/connectors/retell";
+import { outreachFor } from "@/core/candidate-actions";
+import { listScreenCalls } from "@/core/outreach";
 import { PersonalityScales } from "@/components/candidate";
 import { Act, Badge, PageHeader } from "@/components/ui";
 import { DIMENSIONS, SIZE_LABEL, SOURCES, SOURCE_LABEL, describeDimension, personalityOf } from "@/core/candidate-schema";
@@ -10,12 +14,15 @@ import { fmtDate, label } from "@/lib/format";
 
 const k = (n?: number) => (n ? `$${Math.round(n / 1000)}k` : "Unknown");
 
-export default async function Candidate({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ saved?: string; error?: string }> }) {
+export default async function Candidate({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ saved?: string; error?: string; role?: string }> }) {
   const id = Number((await params).id);
   const c = await getCandidate(id);
   if (!c) notFound();
   const { person, profile: p, sources, check } = c;
-  const [roles, q] = await Promise.all([rolesForCandidate(id), searchParams]);
+  const [roles, q, calls] = await Promise.all([rolesForCandidate(id), searchParams, listScreenCalls(id)]);
+  // Outreach is about a role: the one asked for in the link, else their best fit.
+  const roleId = Number(q.role) || roles.find((r) => r.missingMust.length === 0)?.searchId || roles[0]?.searchId;
+  const reach = roleId ? await outreachFor(id, roleId) : null;
   const uncompiled = sources.filter((s) => !s.compiledAt).length;
   const pers = personalityOf(p), known = Object.keys(pers.dimensions).length;
   return (
@@ -27,7 +34,7 @@ export default async function Candidate({ params, searchParams }: { params: Prom
         {person.linkedinUrl && <a href={person.linkedinUrl} target="_blank" rel="noreferrer" className="btn">LinkedIn</a>}
       </PageHeader>
       {q.error && <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{q.error}</div>}
-      {q.saved && <div className="mb-4 rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-900">{q.saved === "source" ? "Saved, and a job is queued for Claude to work it into the profile." : q.saved === "personality" ? "Personality saved. Matches that care about style now use it." : "Profile saved. Search and matching now use this version."}</div>}
+      {q.saved && <div className="mb-4 rounded-xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-900">{q.saved === "source" ? "Saved, and a job is queued for Claude to work it into the profile." : q.saved === "personality" ? "Personality saved. Matches that care about style now use it." : q.saved === "consent" ? "Consent updated." : "Profile saved. Search and matching now use this version."}</div>}
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
           {p.summary && <section className="card p-4 text-sm leading-relaxed">{p.summary}</section>}
@@ -140,12 +147,46 @@ export default async function Candidate({ params, searchParams }: { params: Prom
           </details>
         </div>
         <div className="space-y-6">
+          {reach && (
+            <section className="card p-4 text-sm">
+              <h2 className="text-sm font-semibold">Reach out</h2>
+              <form className="mt-1 mb-3 flex items-center gap-2">
+                <span className="muted text-xs">About</span>
+                <select name="role" defaultValue={roleId} className="field flex-1 py-1 text-xs">{roles.map((r) => <option key={r.searchId} value={r.searchId}>{r.title} ({r.structured}{r.missingMust.length ? ", missing a must-have" : ""})</option>)}</select>
+                <button className="btn">Switch</button>
+              </form>
+              <CandidateOutreach person={person} searchId={reach.role.id} feeler={reach.feeler} retellLive={retellConfigured()} />
+              <details className="mt-3">
+                <summary className="cursor-pointer text-xs font-medium text-brand">See the words each button uses</summary>
+                <div className="mt-2 space-y-2 text-xs">
+                  {[["LinkedIn connection note", reach.feeler.note], ["LinkedIn message and email", reach.feeler.message], ["Text", reach.feeler.text]].map(([name, body]) => <div key={name}><div className="muted font-medium">{name}</div><pre className="whitespace-pre-wrap rounded-md bg-stone-50 p-2 font-sans leading-relaxed">{body}</pre></div>)}
+                </div>
+              </details>
+              {reach.touches.length > 0 && <div className="mt-3 border-t border-stone-100 pt-2 text-xs">{reach.touches.slice(0, 4).map((t) => <div key={t.id} className="flex justify-between"><span>{t.notes}</span><span className="muted">{fmtDate(t.occurredAt)}</span></div>)}</div>}
+              {calls.map((c) => (
+                <div key={c.id} className="mt-2 flex items-center justify-between gap-2 border-t border-stone-100 pt-2 text-xs">
+                  <span><span className="font-medium">AI screen call:</span> {label(c.status)}. <span className="muted">{c.detail}</span></span>
+                  {(c.status === "requested" || c.status === "in_progress") && <Act action={refreshScreenCallAction} fields={{ id: c.id }}>Check for transcript</Act>}
+                </div>
+              ))}
+            </section>
+          )}
+          <section id="consent" className="card p-4 text-sm">
+            <h2 className="mb-1 text-sm font-semibold">Automated calls and texts</h2>
+            <p className="muted mb-2 text-xs">An AI screen call may only go to someone who agreed to one. Tick this once they have, and say how.</p>
+            <form action={consentAction} className="space-y-2">
+              <input type="hidden" name="personId" value={id} />
+              <label className="flex items-center gap-2"><input type="checkbox" name="agreed" defaultChecked={person.aiContactConsent} className="accent-teal-700" /> <span>Agreed to an automated call or text</span></label>
+              <input name="note" defaultValue={person.consentNote ?? ""} placeholder="How and when, e.g. ticked the box on the application, Nov 17" className="field w-full py-1 text-xs" />
+              <button className="btn">Save</button>
+            </form>
+          </section>
           <section className="card p-4 text-sm">
             <h2 className="mb-2 text-sm font-semibold">The basics</h2>
             <dl className="space-y-1.5">
               {[["Open to", p.location.workplace ? `${label(p.location.workplace)}${p.location.willRelocate ? ", would relocate" : ""}` : null], ["Status", p.availability.status ? `${label(p.availability.status)}${p.availability.noticeWeeks != null ? `, ${p.availability.noticeWeeks} weeks notice` : ""}` : null],
                 ["Pay now", p.compensation.currentBase ? k(p.compensation.currentBase) : null], ["Wants", p.compensation.targetBase ? `${k(p.compensation.targetBase)} (will not go below ${k(p.compensation.minimumBase)})` : null], ["Work authorization", p.workAuthorization],
-                ["Looking for", p.targetRoles.join(", ") || null], ["Education", p.education.map((e) => `${e.degree ?? ""} ${e.field ?? ""}, ${e.school}`.trim()).join("; ") || null], ["Certifications", p.certifications.join("; ") || null], ["Email", person.email]].map(([key, val]) => (
+                ["Looking for", p.targetRoles.join(", ") || null], ["Education", p.education.map((e) => `${e.degree ?? ""} ${e.field ?? ""}, ${e.school}`.trim()).join("; ") || null], ["Certifications", p.certifications.join("; ") || null], ["Email", person.email], ["Phone", person.phone]].map(([key, val]) => (
                 <div key={key as string} className="flex gap-2"><dt className="muted w-32 shrink-0 text-xs">{key}</dt><dd className={val ? "" : "muted"}>{val ?? "Unknown"}</dd></div>
               ))}
             </dl>

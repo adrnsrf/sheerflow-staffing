@@ -2,6 +2,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { addToSearchAction, candidateStageAction, queueJobAction, saveRoleAction, saveRoleStyleAction } from "@/app/actions";
 import { MatchScore, MatchWhy, PersonalityScales, ToolFit } from "@/components/candidate";
+import { CandidateOutreach } from "@/components/outreach";
+import { retellConfigured } from "@/connectors/retell";
+import { getCandidateActions } from "@/core/candidate-actions";
 import { Act, Badge, PageHeader } from "@/components/ui";
 import { getSearch } from "@/core";
 import { DIMENSIONS, SIZE_LABEL, describeDimension } from "@/core/candidate-schema";
@@ -16,6 +19,8 @@ export default async function Role({ params }: { params: Promise<{ id: string }>
   if (!data) notFound();
   const { search, client, candidates } = data;
   const matches = await matchRole(search.id, 12);
+  // The ready-to-send words for each person on this role, keyed by person.
+  const ready = new Map((await getCandidateActions({ searchId: search.id, limit: 200 })).map((a) => [a.person.id, a]));
   const req = search.requirements;
   const inPipeline = new Set(candidates.map((c) => c.person.id));
   return (
@@ -84,6 +89,7 @@ export default async function Role({ params }: { params: Promise<{ id: string }>
               <div className="flex flex-wrap items-baseline gap-2"><Link href={`/sourcing/candidates/${m.personId}`} className="font-semibold text-brand hover:underline">{m.name}</Link><span className="muted text-sm">{m.headline}</span></div>
               <div className="mt-1.5"><ToolFit tools={m.tools} /></div>
               <MatchWhy m={m} />
+              {ready.get(m.personId)?.feeler && <div className="mt-2.5 border-t border-stone-100 pt-2.5"><CandidateOutreach person={ready.get(m.personId)!.person} searchId={search.id} feeler={ready.get(m.personId)!.feeler!} retellLive={retellConfigured()} compact /></div>}
             </div>
             <div className="shrink-0">{inPipeline.has(m.personId) ? <Badge tone="green">In pipeline</Badge> : <Act action={addToSearchAction} fields={{ searchId: search.id, personId: m.personId, fitScore: m.score, fitNotes: m.parts[0].note }} className="btn btn-primary">Add to pipeline</Act>}</div>
           </div>

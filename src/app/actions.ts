@@ -9,6 +9,7 @@ import * as core from "@/core";
 import * as imports from "@/core/imports";
 import * as candidates from "@/core/candidates";
 import * as context from "@/core/context";
+import * as outreach from "@/core/outreach";
 import { DIMENSIONS, type Source } from "@/core/candidate-schema";
 import { getRole, saveRole } from "@/core/matching";
 import * as signals from "@/core/signals";
@@ -192,3 +193,16 @@ export async function saveRoleAction(f: FormData) {
   done();
   redirect(target);
 }
+
+// Candidate outreach
+export async function outreachAction(f: FormData) { await outreach.logOutreach(num(f, "personId"), num(f, "searchId"), f.get("channel") as outreach.Channel); done(); }
+export async function consentAction(f: FormData) { await outreach.setConsent(num(f, "personId"), f.get("agreed") === "on", str(f, "note")); done(); redirect(`/sourcing/candidates/${num(f, "personId")}?saved=consent#consent`); }
+/** Returns a result instead of redirecting, so the button can say what happened in place. */
+export async function screenCallAction(f: FormData): Promise<{ message?: string; error?: string }> {
+  try {
+    const call = await outreach.requestScreenCall(num(f, "personId"), num(f, "searchId"));
+    done();
+    return call.status === "failed" ? { error: call.detail ?? "The call could not be placed" } : { message: call.status === "requested" ? "Call placed" : "Request recorded (Retell not connected, no call placed)" };
+  } catch (e) { return { error: e instanceof Error ? e.message : String(e) }; }
+}
+export async function refreshScreenCallAction(f: FormData) { await outreach.refreshScreenCall(num(f, "id")); done(); }
