@@ -12,7 +12,9 @@ import * as core from "@/core";
 import { getNextActions } from "@/core/decisions";
 import * as imports from "@/core/imports";
 import * as signals from "@/core/signals";
+import * as candidates from "@/core/candidates";
 import * as context from "@/core/context";
+import * as matching from "@/core/matching";
 import { addPhone } from "@/core/phones";
 import * as staffing from "@/core/staffing";
 
@@ -59,8 +61,36 @@ export function buildMcpServer() {
   server.registerTool("list_jobs", { description: "Work the app has queued for Claude. Start a run by listing queued jobs, do each one, then call complete_job.", annotations: read, inputSchema: { status: z.enum(["queued", "in_progress", "done", "failed"]).default("queued") } },
     safe(async ({ status }) => core.listJobs({ status })));
 
-  server.registerTool("search_talent_pool", { description: "Search past candidates by skill, stack, title or location.", annotations: read, inputSchema: { skill: z.string().optional() } },
-    safe(async (a) => (await core.listTalentPool(a)).map((p) => ({ id: p.id, name: p.name, title: p.title, location: p.location, skills: p.skills }))));
+  // ----- Candidates and roles -----
+  server.registerTool("search_candidates", { description: "Vector search over candidate profiles. Describe who you need in plain words; returns the closest profiles with their top tools and years.", annotations: read, inputSchema: { query: z.string(), limit: z.number().default(10) } },
+    safe(async (a) => {
+      const all = new Map((await candidates.listCandidates()).map((c) => [c.person.id, c]));
+      return (await matching.searchCandidates(a.query, a.limit)).map((h) => { const c = all.get(h.personId)!; return { id: h.personId, name: c.person.name, headline: c.cp.profile.headline, similarity: h.similarity, matchedOn: h.matchedOn, snippet: h.snippet, toolHits: h.toolHits, knownPercent: c.cp.completeness }; });
+    }));
+
+  server.registerTool("get_candidate", { description: "One candidate: the structured profile, every raw source it was compiled from (with whether each is compiled yet), and what is still missing.", annotations: read, inputSchema: { person_id: z.number() } },
+    safe(async (a) => { const c = await candidates.getCandidate(a.person_id); if (!c) throw new Error(`No candidate with id ${a.person_id}`); return { id: c.person.id, name: c.person.name, linkedin: c.person.linkedinUrl, profile: c.profile, missing: c.check.missing, knownPercent: c.check.score, sources: c.sources.map((x) => ({ id: x.id, kind: x.kind, title: x.title, received: x.receivedAt, compiled: !!x.compiledAt, content: x.content })) }; }));
+
+  server.registerTool("add_candidate", { description: "Add a candidate (or find the existing one by LinkedIn URL). Returns the person id.", inputSchema: { name: z.string(), linkedin_url: z.string().optional(), email: z.string().optional() } },
+    safe(async (a) => ({ personId: await candidates.createCandidate({ name: a.name, linkedinUrl: a.linkedin_url, email: a.email }) })));
+
+  server.registerTool("add_candidate_source", { description: "Store raw material about a candidate exactly as received: a resume, application answers, a screen-call transcript, messages. Kept for tracing facts back; does not change the profile.", inputSchema: { person_id: z.number(), kind: z.enum(["linkedin", "resume", "application", "screen_call", "conversation", "recruiter_note"]), title: z.string().optional(), content: z.string() } },
+    safe(async (a) => { const src = await candidates.addCandidateSource({ personId: a.person_id, kind: a.kind, title: a.title, content: a.content, queue: false }); return { sourceId: src.id }; }));
+
+  server.registerTool("save_candidate_profile", { description: "Save a candidate's compiled profile (the whole structured document; see the compiling-candidate-profiles skill for the shape). Replaces the previous profile, marks the candidate's sources as compiled, and rebuilds the search vector. Rejected if it does not fit the schema.", inputSchema: { person_id: z.number(), profile: z.record(z.string(), z.unknown()) } },
+    safe(async (a) => candidates.saveCandidateProfile(a.person_id, a.profile, { markSourcesCompiled: true })));
+
+  server.registerTool("list_roles", { description: "The open roles being filled, each with its requirements.", annotations: read },
+    safe(async () => { await candidates.candidatesReady(); return (await core.listSearches()).map((r) => ({ id: r.search.id, title: r.search.title, client: r.client, status: r.search.status, requirements: r.search.requirements, pipeline: r.stages })); }));
+
+  server.registerTool("match_role", { description: "Rank candidates for a saved role. Each match has an overall score, a requirements score, a similarity score, years per required tool, and the reasons.", annotations: read, inputSchema: { role_id: z.number(), limit: z.number().default(10) } },
+    safe(async (a) => (await matching.matchRole(a.role_id, a.limit)).map((m) => ({ id: m.personId, name: m.name, headline: m.headline, score: m.score, requirements: m.structured, similarity: m.similarity, missingMustHaves: m.missingMust, tools: m.tools, reasons: m.parts.map((p) => `${p.label}: ${p.note}`) }))));
+
+  server.registerTool("match_job_description", { description: "Rank candidates against any job description text without saving it. Also returns the requirements the app read from the text.", annotations: read, inputSchema: { text: z.string(), limit: z.number().default(10) } },
+    safe(async (a) => { const r = await matching.matchText(a.text, a.limit); return { requirementsRead: r.requirements, matches: r.matches.map((m) => ({ id: m.personId, name: m.name, score: m.score, requirements: m.structured, similarity: m.similarity, missingMustHaves: m.missingMust, reasons: m.parts.map((p) => `${p.label}: ${p.note}`) })) }; }));
+
+  server.registerTool("save_role", { description: "Create or update a role from a job description. Pass requirements to set them exactly (tools with minYears and must, minTotalYears, companySize, workplace, city, state, maxBase); otherwise they are read from the text.", inputSchema: { id: z.number().optional(), title: z.string(), client_name: z.string().optional(), description: z.string(), requirements: z.record(z.string(), z.unknown()).optional() } },
+    safe(async (a) => ({ roleId: await matching.saveRole({ id: a.id, title: a.title, clientName: a.client_name, description: a.description, requirements: a.requirements as never }) })));
 
   // ----- Write tools (append and dedupe only; nothing is sent or spent) -----
   server.registerTool("add_company", { description: "Add a company. If the domain already exists the existing record is returned unchanged.", inputSchema: { name: z.string(), domain: z.string(), industry: z.string().optional(), location: z.string().optional(), employees: z.number().optional(), icp_tier: z.enum(["A", "B", "C"]).optional(), icp_score: z.number().optional() } },

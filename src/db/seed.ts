@@ -56,26 +56,6 @@ const ALTS: [string, string][] = [
   ["Lauren Voss", "Head of People"], ["Kofi Asante", "Senior Recruiter"], ["Ivy Marchetti", "Manager, BI"],
 ];
 
-const CANDIDATES: [string, string, string, string, string][] = [
-  // name, title, employer, location, skills
-  ["Anika Shah", "Senior Data Engineer", "a regional bank", "Chicago, IL", "Python, Spark, Airflow, Snowflake, dbt"],
-  ["Jordan Reyes", "Analytics Engineer", "a retail chain", "Dallas, TX", "dbt, SQL, Looker, BigQuery"],
-  ["Mei Tanaka", "Data Engineer", "a logistics startup", "Columbus, OH", "Python, Kafka, Databricks, AWS"],
-  ["Tomás Herrera", "BI Developer", "a health system", "Nashville, TN", "Power BI, SQL Server, DAX, SSIS"],
-  ["Rachel Kim", "Staff Data Engineer", "a fintech", "Remote (US)", "Scala, Spark, Kafka, GCP, Terraform"],
-  ["Devon Clarke", "Data Analyst", "an insurer", "Hartford, CT", "SQL, Tableau, Python, Excel"],
-  ["Sofia Petrov", "Senior Analytics Engineer", "a SaaS company", "Austin, TX", "dbt, Snowflake, Fivetran, Sigma"],
-  ["Malik Johnson", "Data Platform Engineer", "a manufacturer", "Pittsburgh, PA", "Azure, Databricks, Python, Delta Lake"],
-  ["Hye-jin Lee", "Lead Data Engineer", "a grocery chain", "Minneapolis, MN", "Airflow, Snowflake, Python, dbt"],
-  ["Chris Novak", "BI Engineer", "a credit union", "Norfolk, VA", "Power BI, SQL, Azure Synapse"],
-  ["Fatima Aziz", "Data Engineer", "an energy company", "Houston, TX", "Python, AWS Glue, Redshift, Airflow"],
-  ["Owen Gallagher", "Senior Data Analyst", "a hotel group", "Phoenix, AZ", "SQL, Tableau, dbt, Python"],
-  ["Lucia Romano", "Analytics Manager", "a pharma services firm", "Raleigh, NC", "SQL, Looker, people management"],
-  ["Ethan Brooks", "Data Engineer", "a media company", "Denver, CO", "Python, BigQuery, Dataflow, dbt"],
-  ["Zara Ahmed", "Senior BI Developer", "a distributor", "Kansas City, MO", "Tableau, SQL, Snowflake, Alteryx"],
-  ["Noah Stein", "Data Engineering Manager", "a lender", "Salt Lake City, UT", "Snowflake, Airflow, Python, hiring"],
-];
-
 const SETTINGS = [
   { key: "apollo_budget", value: { cycleCredits: 2400, reservePct: 20, cycleResets: "1st of the month" } },
   { key: "claude_usage", value: { resets: "Wednesday 2:59 AM" } },
@@ -233,24 +213,6 @@ export async function seed(db: Db, opts: { sample: boolean } = { sample: true })
     { kind: "cold_email", personId: dms[5].id, companyId: companies[5].id, subject: "Data hires at Parkline", body: `Hi ${dms[5].name.split(" ")[0]},\n\nCongrats on the new platform work at Parkline. If the team needs data engineers faster than your recruiters can find them, I can help.\n\nAdrian` },
   ]);
 
-  // Candidate sourcing.
-  const cands = await db.insert(s.people).values(CANDIDATES.map(([name, title, employer, location, skills], i) => ({
-    type: "candidate" as const, name, title, currentEmployer: employer, location, skills,
-    linkedinUrl: `https://www.linkedin.com/in/sample-${slug(name)}`, apolloId: `sample-person-${3000 + i}`,
-    email: i % 2 === 0 ? `${slug(name).replace("-", ".")}@mail.example` : null, contactRevealed: i % 2 === 0,
-  }))).returning();
-  const srch = await db.insert(s.searches).values([
-    { companyId: companies[1].id, title: "Senior Data Engineer", mustHaves: "5+ years, Python, Spark, healthcare data a plus", stack: "Python, Spark, Airflow, Snowflake, AWS", compRange: "$155k to $180k + bonus", process: "Recruiter screen, hiring manager, technical panel, offer. About 3 weeks.", sellingPoints: "New VP of Data, greenfield platform, hybrid in Nashville or remote.", openedAt: ago(12) },
-    { companyId: companies[4].id, title: "BI Developer", mustHaves: "Power BI, SQL, stakeholder-facing", stack: "Power BI, Azure Synapse, SQL Server", compRange: "$105k to $125k", process: "Two interviews and a take-home dashboard.", sellingPoints: "Stable employer, 4-day in-office week, strong benefits.", openedAt: ago(30), status: "filled" },
-    { companyId: companies[0].id, title: "Analytics Engineer", mustHaves: "dbt, SQL, modeling for operations data", stack: "dbt, Snowflake, Fivetran, Looker", compRange: "$130k to $150k", process: "Pending signed terms.", sellingPoints: "Small team, direct line to the VP of Data.", openedAt: ago(3), status: "on_hold" },
-  ]).returning();
-  const stages: s.CandidateStage[] = ["sourced", "sourced", "contacted", "contacted", "screened", "submitted", "interview", "rejected"];
-  await db.insert(s.searchCandidates).values([
-    ...[0, 2, 4, 7, 8, 10, 13, 15].map((ci, i) => ({ searchId: srch[0].id, personId: cands[ci].id, stage: stages[i], fitScore: 92 - i * 6, fitNotes: i < 4 ? "Strong stack match. Check healthcare data experience." : "Meets must-haves. Comp at the top of range.", source: i % 2 ? "LinkedIn (manual)" : "Apollo people search" })),
-    ...[3, 9, 14].map((ci, i) => ({ searchId: srch[1].id, personId: cands[ci].id, stage: (["rejected", "placed", "interview"] as const)[i], fitScore: 80 + i * 5, fitNotes: "Power BI depth confirmed in screen.", source: "Referral" })),
-    ...[1, 6].map((ci) => ({ searchId: srch[2].id, personId: cands[ci].id, stage: "sourced" as const, fitScore: 88, fitNotes: "dbt and Snowflake match.", source: "Talent pool" })),
-  ]);
-
   // Business management.
   await db.insert(s.agreements).values([
     { companyId: companies[1].id, kind: "Direct-hire (contingency)", feePct: 20, guaranteeDays: 90, status: "signed", provider: "PandaDoc", signedAt: ago(14) },
@@ -259,7 +221,7 @@ export async function seed(db: Db, opts: { sample: boolean } = { sample: true })
     { companyId: companies[3].id, kind: "Direct-hire (contingency)", feePct: 20, guaranteeDays: 60, status: "draft", provider: "PandaDoc" },
   ]);
   await db.insert(s.placements).values([
-    { companyId: companies[4].id, personId: cands[9].id, roleTitle: "BI Developer", salary: 118000, feePct: 18, startDate: ago(20), invoiceStatus: "invoiced", dueDate: ahead(10) },
+    { companyId: companies[4].id, roleTitle: "BI Developer", salary: 118000, feePct: 18, startDate: ago(20), invoiceStatus: "invoiced", dueDate: ahead(10) },
     { companyId: companies[4].id, roleTitle: "Data Analyst", salary: 95000, feePct: 18, startDate: ago(75), invoiceStatus: "paid", dueDate: ago(45) },
     { companyId: companies[1].id, roleTitle: "Analytics Engineer", salary: 142000, feePct: 20, startDate: ago(50), invoiceStatus: "overdue", dueDate: ago(6) },
   ]);

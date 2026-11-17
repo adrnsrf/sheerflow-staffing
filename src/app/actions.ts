@@ -7,11 +7,13 @@ import fs from "node:fs";
 import path from "node:path";
 import * as core from "@/core";
 import * as imports from "@/core/imports";
+import * as candidates from "@/core/candidates";
 import * as context from "@/core/context";
+import { saveRole } from "@/core/matching";
 import * as signals from "@/core/signals";
 import * as staffing from "@/core/staffing";
 import { IMPORTS_DIR } from "@/db/client";
-import type { CallOutcome, CandidateStage, ConnectionStatus, ContextKind, JobPostingStatus, SignalStatus, StaffingStatus } from "@/db/schema";
+import type { CallOutcome, CandidateSourceKind, CandidateStage, ConnectionStatus, ContextKind, JobPostingStatus, SignalStatus, StaffingStatus } from "@/db/schema";
 
 // Server actions: what the buttons call. Each one is a thin wrapper around src/core.
 const num = (f: FormData, k: string) => Number(f.get(k));
@@ -119,3 +121,48 @@ export async function connectionsUploadAction(f: FormData) {
 
 /** Change how much a kind of signal counts, and how fast it fades. */
 export async function signalTypeAction(f: FormData) { await signals.updateSignalType(str(f, "type") ?? "", num(f, "weight"), num(f, "halfLifeDays")); done(); }
+
+// Candidates and roles
+const back = (path: string, e: unknown) => `${path}${path.includes("?") ? "&" : "?"}error=${encodeURIComponent(e instanceof Error ? e.message : String(e))}`;
+
+/** Add a candidate, with a first piece of raw material if one was pasted. */
+export async function createCandidateAction(f: FormData) {
+  let target: string;
+  try {
+    const id = await candidates.createCandidate({ name: str(f, "name") ?? "", linkedinUrl: str(f, "linkedinUrl"), email: str(f, "email") });
+    if (str(f, "content")) await candidates.addCandidateSource({ personId: id, kind: (str(f, "kind") ?? "linkedin") as CandidateSourceKind, title: str(f, "title"), content: str(f, "content")! });
+    target = `/sourcing/candidates/${id}`;
+  } catch (e) { target = back("/sourcing/candidates/new", e); }
+  done();
+  redirect(target);
+}
+export async function addSourceAction(f: FormData) {
+  const id = num(f, "personId");
+  let target = `/sourcing/candidates/${id}?saved=source`;
+  try { await candidates.addCandidateSource({ personId: id, kind: (str(f, "kind") ?? "recruiter_note") as CandidateSourceKind, title: str(f, "title"), content: str(f, "content") ?? "" }); }
+  catch (e) { target = back(`/sourcing/candidates/${id}`, e); }
+  done();
+  redirect(target);
+}
+export async function compileCandidateAction(f: FormData) { await candidates.queueCompile(num(f, "personId")); done(); }
+/** Save the profile JSON edited by hand. */
+export async function saveProfileAction(f: FormData) {
+  const id = num(f, "personId");
+  let target = `/sourcing/candidates/${id}?saved=profile`;
+  try { await candidates.saveCandidateProfile(id, JSON.parse(str(f, "json") ?? "{}")); }
+  catch (e) { target = back(`/sourcing/candidates/${id}`, e); }
+  done();
+  redirect(target);
+}
+export async function addToSearchAction(f: FormData) { await candidates.addToSearch(num(f, "searchId"), num(f, "personId"), num(f, "fitScore") || undefined, str(f, "fitNotes")); done(); }
+export async function clearSamplesAction() { await candidates.clearSampleCandidates(); done(); }
+export async function saveRoleAction(f: FormData) {
+  let target: string;
+  try {
+    const reqJson = str(f, "requirements");
+    const id = await saveRole({ id: num(f, "id") || undefined, title: str(f, "title") ?? "", clientName: str(f, "clientName"), description: str(f, "description") ?? "", requirements: reqJson ? JSON.parse(reqJson) : undefined });
+    target = `/sourcing/searches/${id}`;
+  } catch (e) { target = back("/sourcing/searches", e); }
+  done();
+  redirect(target);
+}

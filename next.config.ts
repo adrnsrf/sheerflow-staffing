@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   // The local database (PGlite) is a WASM package that must load from node_modules.
-  serverExternalPackages: ["@electric-sql/pglite"],
+  serverExternalPackages: ["@electric-sql/pglite", "@electric-sql/pglite-pgvector", "@energetic-ai/embeddings", "@energetic-ai/model-embeddings-en", "@energetic-ai/core"],
   devIndicators: false,
   // Room for uploading a LinkedIn Connections export or a sheet saved as CSV.
   experimental: { serverActions: { bodySizeLimit: "8mb" } },

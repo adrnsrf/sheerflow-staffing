@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
+import { vector } from "@electric-sql/pglite-pgvector";
 import { count } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
@@ -20,7 +21,8 @@ const hasImportFiles = () => fs.existsSync(IMPORTS_DIR) && fs.readdirSync(IMPORT
 async function init(): Promise<Db> {
   const dir = process.env.SHEERFLOW_DATA_DIR ?? path.join(process.cwd(), ".data", "pglite");
   fs.mkdirSync(dir, { recursive: true });
-  const pg = new PGlite(dir);
+  const pg = new PGlite(dir, { extensions: { vector } });
+  await pg.exec("create extension if not exists vector");
   const db = drizzle(pg, { schema });
   await migrate(db, { migrationsFolder: path.join(process.cwd(), "drizzle") });
   await buildModels(pg);

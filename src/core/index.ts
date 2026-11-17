@@ -346,30 +346,23 @@ export async function listUsers() {
 
 export async function listSearches() {
   const db = await getDb();
-  const rows = await db.select({ search: s.searches, company: s.companies }).from(s.searches).innerJoin(s.companies, eq(s.searches.companyId, s.companies.id)).orderBy(asc(s.searches.status), desc(s.searches.openedAt));
+  const rows = await db.select({ search: s.searches, company: s.companies }).from(s.searches).leftJoin(s.companies, eq(s.searches.companyId, s.companies.id)).orderBy(asc(s.searches.status), desc(s.searches.openedAt), asc(s.searches.id));
   const counts = await db.select({ searchId: s.searchCandidates.searchId, stage: s.searchCandidates.stage, n: sql<number>`count(*)::int` }).from(s.searchCandidates).groupBy(s.searchCandidates.searchId, s.searchCandidates.stage);
-  return rows.map((r) => ({ ...r, stages: Object.fromEntries(counts.filter((c) => c.searchId === r.search.id).map((c) => [c.stage, c.n])) as Partial<Record<s.CandidateStage, number>> }));
+  return rows.map((r) => ({ ...r, client: r.company?.name ?? r.search.clientName ?? "Client not set", stages: Object.fromEntries(counts.filter((c) => c.searchId === r.search.id).map((c) => [c.stage, c.n])) as Partial<Record<s.CandidateStage, number>> }));
 }
 
 export async function getSearch(searchId: number) {
   const db = await getDb();
-  const [row] = await db.select({ search: s.searches, company: s.companies }).from(s.searches).innerJoin(s.companies, eq(s.searches.companyId, s.companies.id)).where(eq(s.searches.id, searchId));
+  const [row] = await db.select({ search: s.searches, company: s.companies }).from(s.searches).leftJoin(s.companies, eq(s.searches.companyId, s.companies.id)).where(eq(s.searches.id, searchId));
   if (!row) return null;
   const candidates = await db.select({ link: s.searchCandidates, person: s.people }).from(s.searchCandidates).innerJoin(s.people, eq(s.searchCandidates.personId, s.people.id))
     .where(eq(s.searchCandidates.searchId, searchId)).orderBy(desc(s.searchCandidates.fitScore));
-  return { ...row, candidates };
+  return { ...row, client: row.company?.name ?? row.search.clientName ?? "Client not set", candidates };
 }
 
 export async function setCandidateStage(linkId: number, stage: s.CandidateStage) {
   const db = await getDb();
   await db.update(s.searchCandidates).set({ stage }).where(eq(s.searchCandidates.id, linkId));
-}
-
-export async function listTalentPool(opts: { skill?: string } = {}) {
-  const db = await getDb();
-  const rows = await db.select().from(s.people).where(eq(s.people.type, "candidate")).orderBy(asc(s.people.name));
-  const q = opts.skill?.toLowerCase().trim();
-  return q ? rows.filter((p) => `${p.skills} ${p.title} ${p.location}`.toLowerCase().includes(q)) : rows;
 }
 
 // ---------- Business management ----------

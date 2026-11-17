@@ -7,7 +7,7 @@ import { useState } from "react";
 const NAV: { heading: string; items: [string, string][] }[] = [
   { heading: "", items: [["/", "Today"]] },
   { heading: "Business development", items: [["/bd/actions", "Next actions"], ["/bd/signals", "Signals inbox"], ["/bd/jobs", "Job alerts"], ["/bd/accounts", "Accounts"], ["/bd/people", "People"], ["/bd/calls", "Call list"], ["/bd/connections", "Connection queue"], ["/bd/staffing", "Staffing firms"], ["/bd/drafts", "Outreach drafts"], ["/bd/pipeline", "Pipeline"]] },
-  { heading: "Candidate sourcing", items: [["/sourcing/searches", "Searches"], ["/sourcing/talent", "Talent pool"]] },
+  { heading: "Candidate sourcing", items: [["/sourcing/candidates", "Candidates"], ["/sourcing/searches", "Roles"], ["/sourcing/match", "Try a job description"]] },
   { heading: "Business management", items: [["/manage/clients", "Clients & agreements"], ["/manage/money", "Money"], ["/manage/kpis", "KPIs & weekly review"], ["/manage/vendor", "Vendor scorecard"], ["/manage/budgets", "Budgets"]] },
   { heading: "System", items: [["/system/claude", "Claude"], ["/system/context", "AI context"], ["/system/scoring", "Signal scoring"], ["/system/import", "Import"], ["/system/connectors", "Connections"]] },
 ];

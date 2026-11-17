@@ -1,4 +1,6 @@
-import { boolean, integer, jsonb, pgTable, serial, text, timestamp } from "drizzle-orm/pg-core";
+import { boolean, integer, jsonb, pgTable, serial, text, timestamp, vector } from "drizzle-orm/pg-core";
+import type { Profile } from "../core/candidate-schema";
+import type { Requirements } from "../core/matching";
 
 /**
  * Shared core. All three workspaces read and write these tables.
@@ -217,10 +219,19 @@ export const drafts = pgTable("drafts", {
   createdAt: created(),
 });
 
+/** An open role we are filling: the job description, what it requires, and its vector for matching. */
 export const searches = pgTable("searches", {
   id: serial("id").primaryKey(),
-  companyId: integer("company_id").notNull().references(() => companies.id),
+  /** The client, when it is an account. A role can also be entered with just a client name. */
+  companyId: integer("company_id").references(() => companies.id),
+  clientName: text("client_name"),
   title: text("title").notNull(),
+  /** The job description as written. */
+  description: text("description"),
+  /** What the role needs, in a form that can be scored: tools with minimum years, company size, pay. */
+  requirements: jsonb("requirements").$type<Requirements>(),
+  embedding: vector("embedding", { dimensions: 512 }),
+  isSample: boolean("is_sample").notNull().default(false),
   status: text("status").$type<"open" | "on_hold" | "filled">().notNull().default("open"),
   mustHaves: text("must_haves"),
   stack: text("stack"),
@@ -228,6 +239,51 @@ export const searches = pgTable("searches", {
   process: text("process"),
   sellingPoints: text("selling_points"),
   openedAt: timestamp("opened_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * A candidate's resume as structured data (see src/core/candidate-schema.ts), one row per
+ * candidate. `profileText` is the same profile as prose and `embedding` is that prose as a
+ * vector; both are rebuilt whenever the profile is saved.
+ */
+export const candidateProfiles = pgTable("candidate_profiles", {
+  personId: integer("person_id").primaryKey().references(() => people.id),
+  profile: jsonb("profile").$type<Profile>().notNull(),
+  profileText: text("profile_text").notNull().default(""),
+  embedding: vector("embedding", { dimensions: 512 }),
+  completeness: integer("completeness").notNull().default(0),
+  isSample: boolean("is_sample").notNull().default(false),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * A profile cut into parts (summary, tools, each job, work style), each with its own vector.
+ * Search compares the query with every part and takes the closest, so a question about how
+ * someone works is answered by their work-style part, not blurred across the whole resume.
+ */
+export const candidateChunks = pgTable("candidate_chunks", {
+  id: serial("id").primaryKey(),
+  personId: integer("person_id").notNull().references(() => people.id),
+  kind: text("kind").$type<"summary" | "tools" | "experience" | "work_style">().notNull(),
+  content: text("content").notNull(),
+  embedding: vector("embedding", { dimensions: 512 }),
+});
+
+export type CandidateSourceKind = "linkedin" | "resume" | "application" | "screen_call" | "conversation" | "recruiter_note";
+/**
+ * Raw material about a candidate, exactly as it arrived: a pasted LinkedIn profile, a resume,
+ * an application form, a screen-call transcript, messages. The profile is compiled from these,
+ * and they are kept so any fact can be traced back.
+ */
+export const candidateSources = pgTable("candidate_sources", {
+  id: serial("id").primaryKey(),
+  personId: integer("person_id").notNull().references(() => people.id),
+  kind: text("kind").$type<CandidateSourceKind>().notNull(),
+  title: text("title"),
+  content: text("content").notNull(),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+  /** Set once the content has been worked into the profile. */
+  compiledAt: timestamp("compiled_at", { withTimezone: true }),
 });
 
 export type CandidateStage = "sourced" | "contacted" | "screened" | "submitted" | "interview" | "offer" | "placed" | "rejected";

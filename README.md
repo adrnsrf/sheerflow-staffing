@@ -53,6 +53,10 @@ src/core/             All the rules, in one place.
   context.ts          The AI context store (skills and routines).
   imports.ts          Importers for the sheets, job alert emails and LinkedIn's export.
   signals.ts          Reads the signal model; feeds Apollo intent and job postings.
+  candidate-schema.ts The candidate profile: a resume as structured data, and what is missing from it.
+  candidates.ts       The candidate list, raw sources and the compile queue.
+  matching.ts         Roles, requirements, vector search and candidate-to-role matching.
+  embeddings.ts       Text to vectors with a model that runs on this machine.
   decisions.ts        The rules that turn scores into Next actions.
 context/              Shipped skills and routines, as Markdown. Copied into the database on start.
 models/               The transformation layer: one SQL SELECT per file, built as database views.
@@ -96,10 +100,10 @@ credits. Do-not-contact companies cannot be put on the call list. Connection not
 | Accounts | List, search, one-page account view with every touch | Briefs come from the company-research skill |
 | Outreach drafts | Review, approve, copy | Push to Gmail drafts or an Apollo sequence |
 | Pipeline | Stages with fee forecast | Moving deals between stages |
-| Sourcing | Searches, candidate stages, talent pool search | Screens, scorecards, submittal packets |
+| Sourcing | Candidate profiles, raw sources, vector search, roles, matching with reasons, pipeline stages | Application form, Retell AI call, submittal packets |
 | Management | Agreements, money, KPIs, vendor scorecard, credit budget | PandaDoc / Docusign / QuickBooks data, real targets |
 | Signals | Scored signal model, Next actions with reasons, editable weights | Apollo intent and Apollo job postings have no data until the routine runs |
-| Claude | 34 MCP tools, job queue, AI context store | Routines moved over to write here instead of the sheets |
+| Claude | 42 MCP tools, job queue, AI context store | Routines moved over to write here instead of the sheets |
 | Logins | None: one local user | Supabase login for reps and D Foster |
 
 ## Real data: imports
@@ -208,6 +212,54 @@ the app (dbt cannot connect to it), and at a few thousand rows plain views are a
 with nothing to schedule. Airflow would be a second server to run for jobs that Claude routines
 already do. The point to adopt them is after moving to a hosted Postgres (Supabase): dbt first,
 for tests and history tables; a scheduler only if routines need to run without a Claude session.
+
+## Candidates, roles and matching
+
+**One compiled profile per candidate.** `candidate_profiles.profile` is a resume as structured
+JSON: tools with years, last use and level; jobs with company size, responsibilities and
+results; location, pay, availability, work authorization; how they work and what they want; the
+screen summary. The shape is defined and checked in `src/core/candidate-schema.ts`.
+
+**Where the facts come from.** Raw material is kept as received in `candidate_sources`
+(LinkedIn profile, resume, application, screen call, messages, recruiter note). Adding a source
+queues a `compile_candidate` job; a Claude run reads the sources and writes the whole profile
+with `save_candidate_profile`. Tools and traits record their source and whether the candidate
+said it or it was worked out. Each profile shows a "% known" figure and lists what is missing
+and which intake step usually supplies it.
+
+| Field | Usual source | How sure |
+| --- | --- | --- |
+| Work history, responsibilities, tools used | LinkedIn profile or resume | High |
+| Years on each tool | Worked out from job dates; confirmed in the application or screen | Low until confirmed |
+| Location, remote preference, pay, notice, work authorization | Application form or screen call | High once asked |
+| Work style, what they want and want to avoid | Screen call (Retell AI or you), messages | Medium; evidence is recorded |
+| Company sizes worked in | Worked out from employers | Medium |
+
+**Roles.** A role holds its job description and its requirements in scoreable form: tools with
+minimum years and must/nice, total years, company size, workplace and city, top of the pay band.
+Requirements are read from the pasted description and can be edited.
+
+**Matching uses two scores.** Requirements (65%): years on each required tool, experience,
+company size, location, pay. Similarity (35%): vector closeness of the whole profile to the job
+description. A candidate missing a must-have tool is capped at 55. Vectors alone are not used
+for requirements because an embedding cannot tell five years of a tool from one, or Azure from
+AWS; the vector finds the right kind of person and the facts check the fit. Every match lists
+its reasons.
+
+**Vector search.** Profiles are embedded on this machine by a model that ships as an npm
+package (Universal Sentence Encoder, 512 dimensions): no API key, no cost, nothing sent out.
+Vectors live in Postgres (pgvector). Each profile is stored whole (for role matching) and in
+parts (summary, tools, each job, work style); plain-language search ranks candidates by their
+closest part and shows which part matched. The model is small: it is reliable for the kind of
+work someone does and weaker on fine shades of personality. To change models, edit
+`src/core/embeddings.ts` and re-save the profiles.
+
+**Sample data.** 24 made-up candidates and 7 made-up roles load on first run so search and
+matching can be tried. They are labelled "Sample" and one button on the Candidates screen
+removes them.
+
+Not built yet: a public application form, the Retell AI call itself (its transcript is pasted
+or sent in by a Claude run for now), and pulling applications from LinkedIn job posts.
 
 ## Staffing firms
 

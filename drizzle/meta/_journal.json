@@ -29,6 +29,20 @@
       "when": 1794933844773,
       "tag": "0003_robust_photon",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794934784424,
+      "tag": "0004_glamorous_speedball",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794935301366,
+      "tag": "0005_unique_jamie_braddock",
+      "breakpoints": true
     }
   ]
 }
