@@ -19,7 +19,8 @@ export type CompanyStatus = "prospect" | "client" | "do_not_contact";
 export const companies = pgTable("companies", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
-  domain: text("domain").notNull().unique(),
+  /** Dedupe key when present. Companies that arrive without a website match on name instead. */
+  domain: text("domain").unique(),
   website: text("website"),
   industry: text("industry"),
   location: text("location"),
@@ -31,6 +32,13 @@ export const companies = pgTable("companies", {
   hqPhone: text("hq_phone"),
   altPhones: text("alt_phones"),
   apolloId: text("apollo_id"),
+  apolloAccountId: text("apollo_account_id"),
+  // Research columns from the call sheet.
+  headcountGrowth: text("headcount_growth"),
+  keywords: text("keywords"),
+  technicalRecruiters: integer("technical_recruiters"),
+  avgDataSalaryK: integer("avg_data_salary_k"),
+  openDataRoles: integer("open_data_roles"),
   status: text("status").$type<CompanyStatus>().notNull().default("prospect"),
   brief: text("brief"),
   createdAt: created(),
@@ -48,11 +56,16 @@ export const people = pgTable("people", {
   location: text("location"),
   linkedinUrl: text("linkedin_url").unique(),
   apolloId: text("apollo_id"),
+  apolloContactId: text("apollo_contact_id"),
   email: text("email"),
   phone: text("phone"),
+  phoneType: text("phone_type"),
+  timeInRole: text("time_in_role"),
   contactRevealed: boolean("contact_revealed").notNull().default(false),
   connectionStatus: text("connection_status").$type<ConnectionStatus>().notNull().default("none"),
   connectionNote: text("connection_note"),
+  connectionRequestedAt: timestamp("connection_requested_at", { withTimezone: true }),
+  connectedAt: timestamp("connected_at", { withTimezone: true }),
   skills: text("skills"),
   notes: text("notes"),
   createdAt: created(),
@@ -72,20 +85,36 @@ export const signals = pgTable("signals", {
   source: text("source").notNull(),
   sourceUrl: text("source_url"),
   externalId: text("external_id").unique(),
-  careerVerified: text("career_verified").$type<"Yes" | "No" | "Partial">(),
+  careerVerified: text("career_verified"),
+  careerPageLink: text("career_page_link"),
+  location: text("location"),
+  isUs: text("is_us"),
+  searchQuery: text("search_query"),
+  foundOn: text("found_on"),
+  notes: text("notes"),
+  /** The source row exactly as it arrived (sheet columns by header), so nothing is lost while the model settles. */
+  raw: jsonb("raw").$type<Record<string, string>>(),
   signalDate: timestamp("signal_date", { withTimezone: true }).notNull(),
   status: text("status").$type<SignalStatus>().notNull().default("new"),
   createdAt: created(),
 });
 
-export type CallQueueStatus = "new" | "attempting" | "connected" | "meeting_booked" | "dead" | "do_not_contact";
+export type CallQueueStatus = "new" | "attempting" | "connected" | "meeting_booked" | "needs_info" | "dead" | "do_not_contact";
 /** Replaces the DFC call sheet: one row per company a rep is working. */
 export const callQueue = pgTable("call_queue", {
   id: serial("id").primaryKey(),
-  companyId: integer("company_id").notNull().references(() => companies.id).unique(),
+  companyId: integer("company_id").notNull().references(() => companies.id),
   personId: integer("person_id").references(() => people.id),
   ownerId: integer("owner_id").references(() => users.id),
   status: text("status").$type<CallQueueStatus>().notNull().default("new"),
+  /** Call Status exactly as written in the sheet, kept beside the app's own status. */
+  sourceStatus: text("source_status"),
+  /** Stable key of the source row (Apollo contact id, LinkedIn URL, or company + name) so re-imports never duplicate. */
+  sourceKey: text("source_key").unique(),
+  batch: text("batch"),
+  meetingBooked: text("meeting_booked"),
+  alternateDms: text("alternate_dms"),
+  raw: jsonb("raw").$type<Record<string, string>>(),
   topSignal: text("top_signal"),
   lastContactAt: timestamp("last_contact_at", { withTimezone: true }),
   nextStep: text("next_step"),
@@ -130,7 +159,7 @@ export const deals = pgTable("deals", {
   expectedClose: timestamp("expected_close", { withTimezone: true }),
 });
 
-export type DraftKind = "cold_email" | "follow_up" | "connection_note";
+export type DraftKind = "cold_email" | "follow_up" | "connection_note" | "linkedin_message";
 export const drafts = pgTable("drafts", {
   id: serial("id").primaryKey(),
   kind: text("kind").$type<DraftKind>().notNull(),
@@ -189,6 +218,31 @@ export const placements = pgTable("placements", {
   startDate: timestamp("start_date", { withTimezone: true }),
   invoiceStatus: text("invoice_status").$type<InvoiceStatus>().notNull().default("not_invoiced"),
   dueDate: timestamp("due_date", { withTimezone: true }),
+  createdAt: created(),
+});
+
+export type JobPostingStatus = "new" | "kept" | "dismissed";
+/** Jobs seen in LinkedIn job alert emails. A posting is evidence a company is hiring; it is not yet an account. */
+export const jobPostings = pgTable("job_postings", {
+  id: serial("id").primaryKey(),
+  /** LinkedIn job id. Dedupe key. */
+  externalId: text("external_id").notNull().unique(),
+  title: text("title").notNull(),
+  companyName: text("company_name").notNull(),
+  /** Set when the company name matches an account we already have. */
+  companyId: integer("company_id").references(() => companies.id),
+  location: text("location"),
+  workplace: text("workplace"),
+  salary: text("salary"),
+  url: text("url"),
+  source: text("source").notNull().default("LinkedIn job alert"),
+  alertKind: text("alert_kind"),
+  alertSubject: text("alert_subject"),
+  emailThreadId: text("email_thread_id"),
+  /** Staffing firms and job aggregators re-post other companies' jobs; they are flagged, not deleted. */
+  likelyStaffing: boolean("likely_staffing").notNull().default(false),
+  status: text("status").$type<JobPostingStatus>().notNull().default("new"),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
   createdAt: created(),
 });
 

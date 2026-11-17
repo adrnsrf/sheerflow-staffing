@@ -74,7 +74,19 @@ const CANDIDATES: [string, string, string, string, string][] = [
   ["Noah Stein", "Data Engineering Manager", "a lender", "Salt Lake City, UT", "Snowflake, Airflow, Python, hiring"],
 ];
 
-export async function seed(db: Db) {
+const SETTINGS = [
+  { key: "apollo_budget", value: { cycleCredits: 2400, reservePct: 20, cycleResets: "1st of the month" } },
+  { key: "claude_usage", value: { resets: "Wednesday 2:59 AM" } },
+  { key: "kpi_targets", value: { dials: 60, connects: 12, meetings: 4, agreements: 1, placements: 1, costPerMeeting: 400, vendorWeeklyCost: 1200 } },
+];
+
+/** `sample: false` gives an empty app (just the team and settings) ready for real imports. */
+export async function seed(db: Db, opts: { sample: boolean } = { sample: true }) {
+  if (!opts.sample) {
+    await db.insert(s.users).values([{ name: "Adrian", role: "owner" }, { name: "D Foster Consulting", role: "vendor" }]);
+    await db.insert(s.settings).values(SETTINGS);
+    return;
+  }
   const [adrian, maya, dfc] = await db.insert(s.users).values([
     { name: "Adrian", role: "owner" },
     { name: "Maya (rep)", role: "rep" },
@@ -130,7 +142,7 @@ export async function seed(db: Db) {
         : `Posted about growing the data team at ${c.name}. Role is ${i % 3 === 0 ? "hybrid" : "remote-friendly"}, US only.`,
       roles: cat === "New data leader" ? null : roles[i % 6], companyId: c.id, personId: dm.id,
       source: "LinkedIn hiring posts (daily routine)", sourceUrl: `https://www.linkedin.com/posts/sample-activity-${id}`,
-      externalId: id, careerVerified: (["Yes", "Partial", "No"] as const)[i % 3], signalDate: d,
+      externalId: id, careerVerified: ["Yes", "Partial", "No"][i % 3], signalDate: d,
       status: (i < 7 ? "new" : i < 10 ? "kept" : i < 13 ? "promoted" : "dismissed") as s.SignalStatus,
     });
   });
@@ -250,9 +262,5 @@ export async function seed(db: Db) {
   ];
   await db.insert(s.creditLedger).values(ledger.map(([delta, reason, days]) => ({ delta, reason, balanceAfter: (balance += delta), createdAt: ago(days) })));
 
-  await db.insert(s.settings).values([
-    { key: "apollo_budget", value: { cycleCredits: 2400, reservePct: 20, cycleResets: "1st of the month" } },
-    { key: "claude_usage", value: { resets: "Wednesday 2:59 AM" } },
-    { key: "kpi_targets", value: { dials: 60, connects: 12, meetings: 4, agreements: 1, placements: 1, costPerMeeting: 400, vendorWeeklyCost: 1200 } },
-  ]);
+  await db.insert(s.settings).values([...SETTINGS, { key: "sample_data", value: true }]);
 }

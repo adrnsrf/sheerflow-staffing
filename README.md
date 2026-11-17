@@ -89,8 +89,64 @@ credits. Do-not-contact companies cannot be put on the call list. Connection not
 | Pipeline | Stages with fee forecast | Moving deals between stages |
 | Sourcing | Searches, candidate stages, talent pool search | Screens, scorecards, submittal packets |
 | Management | Agreements, money, KPIs, vendor scorecard, credit budget | PandaDoc / Docusign / QuickBooks data, real targets |
-| Claude | 19 MCP tools, job queue | Routines moved over to write here instead of the sheets |
+| Claude | 27 MCP tools, job queue, routines | Routines moved over to write here instead of the sheets |
 | Logins | None: one local user | Supabase login for reps and D Foster |
+
+## Real data: imports
+
+The Import screen (System, Import) brings over what the routines have produced so far:
+
+| Source | Lands in | Dedupe key |
+| --- | --- | --- |
+| DFC call sheet ("Call List - Nov 2026") | Accounts, People, Call list, plus one logged call per dated entry in DFC Notes | Apollo contact id, else LinkedIn URL, else company + name |
+| LinkedIn hiring posts sheet | Signals inbox, People (posters), Accounts | Post ID |
+| LinkedIn job alert emails | Job alerts | LinkedIn job id |
+| LinkedIn Connections export | Marks people connected | LinkedIn URL |
+
+Put `call-list.json`, `hiring-posts.json` and `job-alerts.json` in an `imports/` folder at the top
+of the project (or upload a CSV saved from the sheet), then press Import. Imports can be repeated:
+new rows are added, known rows are skipped, and a row that changed in the sheet refreshes the
+call-list working columns. `imports/` is never committed, because it holds real contact data.
+
+If `imports/` has files when the database is first created, the app starts empty instead of with
+sample data. `npm run db:reset` then restart gives a fresh start either way.
+
+How the sheet columns map (first pass, expected to change):
+
+- **Company columns** go on `companies`: employees, headcount growth, keywords, recruiter team
+  size, technical recruiters, analytics team size, average data salary, open data roles, company
+  phone, alt company phones, Apollo org and account ids.
+- **Contact columns** go on `people`: title, time in role, email, phone, phone type, location,
+  LinkedIn URL, Apollo person and contact ids.
+- **DFC columns** go on `call_queue`: Call Status is kept word for word in `source_status` and
+  also mapped to a shorter app status; last contact, next step, meeting booked, DFC notes,
+  alternate decision makers and batch are stored as they are.
+- **Hiring post columns** go on `signals` (category, roles, location, US?, career check, search
+  query, notes), with the poster on `people` and Connect? / Connection Note / Connected as that
+  person's LinkedIn status.
+- Every imported row is also kept whole in a `raw` column, so nothing is lost while this settles.
+
+Open questions the data raised are listed at the end of this file.
+
+## LinkedIn, by hand
+
+The app never signs in to LinkedIn, never runs a hidden browser against it and never sends
+anything. LinkedIn's terms prohibit automated activity and accounts get restricted for it.
+What the buttons do instead:
+
+- **Connect** opens the profile in a new tab (with the note on your clipboard if there is one)
+  and marks the request as sent. You press Connect on LinkedIn. Undo is one click.
+- **Draft note first** queues a job; a Claude run writes a note of 300 characters or fewer.
+- **Check who accepted**: press Mark connected on one person, or upload the Connections.csv from
+  LinkedIn's own data export (Settings, Data privacy, Get a copy of your data) to check everyone.
+- **Draft message** (once connected) queues a job; the draft appears in Outreach drafts with a
+  "Copy and open profile" button.
+
+## Routines
+
+`routines/*.md` are the app's own copies of the recurring jobs, rewritten to save into the app
+through the Claude tools. The original skills are not changed. The Routines screen lists them and
+queues a run; Claude reads the instructions with `get_routine`. Nothing runs on a timer yet.
 
 ## Apollo
 
@@ -111,3 +167,19 @@ so expect small fixes to field names on first use.
 Each entry in `src/connectors/index.ts` names the env vars it will need. To switch one on, put
 the keys in `.env.local` (never committed), replace the sample `test()` with a real call, and add
 the methods the core needs (for Apollo: free company and people search, credit balance).
+
+## Open questions from the real data
+
+- **Call status wording.** The sheet uses nine statuses (Left Voicemail, Called - No Answer,
+  Error, New Information Needed, Emailed, Wrong Contact, E-mail Requested...). The app maps them
+  to seven. Decide which list the team should use going forward.
+- **Call history.** DFC Notes are split into one logged call per dated entry and the outcome is
+  guessed from the wording. Good enough to spot bad numbers; not exact for KPIs.
+- **ICP score.** Neither sheet carries a tier or score, so imported accounts show "Unscored" and
+  signals rank by date only until scoring runs.
+- **Job alerts are noisy.** About 4 in 10 jobs come from staffing firms or job boards re-posting
+  other companies' roles. They are flagged by name and hidden by default, not deleted.
+- **Posters without a real name.** Some hiring-post rows have a handle instead of a name, and 71
+  posts have US? = Unknown.
+- **One company, several sources.** A company from the posts sheet with no website matches the
+  call sheet only if the names are identical.

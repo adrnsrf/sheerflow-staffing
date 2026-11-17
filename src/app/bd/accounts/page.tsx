@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Badge, PageHeader, SampleNote, Tier } from "@/components/ui";
+import { Badge, PageHeader, Tier } from "@/components/ui";
 import { listCompanies } from "@/core";
 import { label } from "@/lib/format";
 
@@ -21,7 +21,7 @@ export default async function Accounts({ searchParams }: { searchParams: Promise
           <tbody>
             {rows.map((c) => (
               <tr key={c.id} className="hover:bg-stone-50">
-                <td><Link href={`/bd/accounts/${c.id}`} className="font-medium text-brand hover:underline">{c.name}</Link><div className="muted text-xs">{c.domain}</div></td>
+                <td><Link href={`/bd/accounts/${c.id}`} className="font-medium text-brand hover:underline">{c.name}</Link><div className="muted text-xs">{c.domain ?? "No website on record"}</div></td>
                 <td><Tier tier={c.icpTier} score={c.icpScore} /></td>
                 <td>{c.industry}</td><td>{c.location}</td>
                 <td className="text-right tabular-nums">{c.employees}</td><td className="text-right tabular-nums">{c.dataTeamSize}</td><td className="text-right tabular-nums">{c.recruitingTeamSize}</td>
@@ -31,7 +31,6 @@ export default async function Accounts({ searchParams }: { searchParams: Promise
           </tbody>
         </table>
       </div>
-      <SampleNote />
     </>
   );
 }

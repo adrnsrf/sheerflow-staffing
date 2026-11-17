@@ -3,8 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { ApolloError, apolloAccountsInList } from "@/connectors/apollo";
+import fs from "node:fs";
+import path from "node:path";
 import * as core from "@/core";
-import type { CallOutcome, CandidateStage, ConnectionStatus, SignalStatus } from "@/db/schema";
+import * as imports from "@/core/imports";
+import { queueRoutineRun } from "@/core/routines";
+import { IMPORTS_DIR } from "@/db/client";
+import type { CallOutcome, CandidateStage, ConnectionStatus, JobPostingStatus, SignalStatus } from "@/db/schema";
 
 // Server actions: what the buttons call. Each one is a thin wrapper around src/core.
 const num = (f: FormData, k: string) => Number(f.get(k));
@@ -40,4 +45,47 @@ export async function importApolloListAction(f: FormData) {
   }
   done();
   redirect(`/system/connectors/apollo?${query}`);
+}
+
+export async function draftMessageAction(f: FormData) { await core.queueMessageDraft(num(f, "personId")); done(); }
+export async function jobPostingAction(f: FormData) {
+  if (f.get("status") === "promote") await imports.promoteJobPosting(num(f, "id")); else await imports.setJobPostingStatus(num(f, "id"), f.get("status") as JobPostingStatus);
+  done();
+}
+export async function queueRoutineAction(f: FormData) { await queueRoutineRun(str(f, "id") ?? ""); done(); }
+
+const IMPORTERS = { "call-list": imports.importCallSheet, "hiring-posts": imports.importHiringPosts, "job-alerts": imports.importJobAlerts } as const;
+export type ImportKind = keyof typeof IMPORTERS;
+
+/** Import a file from the imports/ folder, or an uploaded CSV saved from the sheet. */
+export async function importAction(f: FormData) {
+  const kind = str(f, "kind") as ImportKind;
+  let query: string;
+  try {
+    const upload = f.get("file");
+    let rows: Record<string, string>[];
+    if (upload instanceof File && upload.size > 0) rows = imports.csvToRows(await upload.text(), kind === "call-list" ? "Company" : kind === "hiring-posts" ? "Post ID" : "jobId");
+    else rows = JSON.parse(fs.readFileSync(path.join(IMPORTS_DIR, `${kind}.json`), "utf8"));
+    const r = await IMPORTERS[kind](rows);
+    query = new URLSearchParams({ done: kind, result: Object.entries(r).map(([k, v]) => `${k}: ${v}`).join(", ") }).toString();
+  } catch (e) {
+    query = new URLSearchParams({ error: e instanceof Error ? e.message : String(e) }).toString();
+  }
+  done();
+  redirect(`/system/import?${query}`);
+}
+
+/** Check who accepted, from LinkedIn's own Connections export. */
+export async function connectionsUploadAction(f: FormData) {
+  let query: string;
+  try {
+    const upload = f.get("file");
+    if (!(upload instanceof File) || upload.size === 0) throw new Error("Choose the Connections.csv file first.");
+    const r = await imports.importLinkedInConnections(await upload.text());
+    query = new URLSearchParams({ checked: `${r.connectionsInFile} connections in the file. Newly marked connected: ${r.newlyConnected}${r.names.length ? ` (${r.names.join(", ")})` : ""}. Already marked: ${r.alreadyConnected}.` }).toString();
+  } catch (e) {
+    query = new URLSearchParams({ error: e instanceof Error ? e.message : String(e) }).toString();
+  }
+  done();
+  redirect(`/bd/connections?${query}`);
 }

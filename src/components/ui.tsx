@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { getSetting } from "@/core";
 
 export function PageHeader({ title, sub, children }: { title: string; sub?: string; children?: ReactNode }) {
   return (
@@ -54,6 +55,8 @@ export function Act({ action, fields, children, className = "btn", title }: { ac
   );
 }
 
-export function SampleNote({ children }: { children?: ReactNode }) {
+/** Shown only while the app is filled with made-up sample data. */
+export async function SampleNote({ children }: { children?: ReactNode }) {
+  if (!(await getSetting<boolean>("sample_data"))) return null;
   return <p className="muted mt-6 text-xs">{children ?? "Sample data. Every company, person and number on this screen is made up."}</p>;
 }

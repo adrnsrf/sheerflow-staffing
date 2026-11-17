@@ -6,10 +6,10 @@ import { useState } from "react";
 
 const NAV: { heading: string; items: [string, string][] }[] = [
   { heading: "", items: [["/", "Today"]] },
-  { heading: "Business development", items: [["/bd/signals", "Signals inbox"], ["/bd/accounts", "Accounts"], ["/bd/calls", "Call list"], ["/bd/connections", "Connection queue"], ["/bd/drafts", "Outreach drafts"], ["/bd/pipeline", "Pipeline"]] },
+  { heading: "Business development", items: [["/bd/signals", "Signals inbox"], ["/bd/jobs", "Job alerts"], ["/bd/accounts", "Accounts"], ["/bd/people", "People"], ["/bd/calls", "Call list"], ["/bd/connections", "Connection queue"], ["/bd/drafts", "Outreach drafts"], ["/bd/pipeline", "Pipeline"]] },
   { heading: "Candidate sourcing", items: [["/sourcing/searches", "Searches"], ["/sourcing/talent", "Talent pool"]] },
   { heading: "Business management", items: [["/manage/clients", "Clients & agreements"], ["/manage/money", "Money"], ["/manage/kpis", "KPIs & weekly review"], ["/manage/vendor", "Vendor scorecard"], ["/manage/budgets", "Budgets"]] },
-  { heading: "System", items: [["/system/claude", "Claude"], ["/system/connectors", "Connections"]] },
+  { heading: "System", items: [["/system/claude", "Claude"], ["/system/routines", "Routines"], ["/system/import", "Import"], ["/system/connectors", "Connections"]] },
 ];
 
 export function Sidebar({ counts }: { counts: Record<string, number> }) {
@@ -35,7 +35,7 @@ export function Sidebar({ counts }: { counts: Record<string, number> }) {
           })}
         </nav>
       ))}
-      <div className="mt-auto px-2 text-[11px] leading-snug text-stone-500">Local build with sample data. Nothing is sent, connected or spent.</div>
+      <div className="mt-auto px-2 text-[11px] leading-snug text-stone-500">Local build. The app itself never sends, connects or spends.</div>
     </aside>
   );
 }

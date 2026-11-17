@@ -9,6 +9,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import * as core from "@/core";
+import * as imports from "@/core/imports";
+import { getRoutine, listRoutines } from "@/core/routines";
 
 const json = (data: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] });
 const fail = (e: unknown) => ({ content: [{ type: "text" as const, text: e instanceof Error ? e.message : String(e) }], isError: true });
@@ -74,7 +76,7 @@ export function buildMcpServer() {
   server.registerTool("draft_note", { description: "Save a LinkedIn connection note (max 300 characters) for a person. A human copies it and sends the request by hand.", inputSchema: { person_id: z.number(), note: z.string() } },
     safe(async (a) => core.saveConnectionNote(a.person_id, a.note)));
 
-  server.registerTool("save_draft", { description: "Save an email draft for review. It is never sent from here.", inputSchema: { kind: z.enum(["cold_email", "follow_up"]), person_id: z.number().optional(), company_id: z.number().optional(), subject: z.string(), body: z.string() } },
+  server.registerTool("save_draft", { description: "Save an email or LinkedIn message draft for review. It is never sent from here.", inputSchema: { kind: z.enum(["cold_email", "follow_up", "linkedin_message"]), person_id: z.number().optional(), company_id: z.number().optional(), subject: z.string(), body: z.string() } },
     safe(async (a) => core.saveDraft({ kind: a.kind, personId: a.person_id, companyId: a.company_id, subject: a.subject, body: a.body })));
 
   server.registerTool("add_task", { description: "Add a task for a person on the team.", inputSchema: { title: z.string(), owner_id: z.number().optional(), company_id: z.number().optional(), due_date: z.string().optional() } },
@@ -87,6 +89,31 @@ export function buildMcpServer() {
     description: "Add companies found elsewhere (for example through the Apollo connector). Deduped on domain: known companies are skipped, never overwritten.",
     inputSchema: { companies: z.array(z.object({ name: z.string(), domain: z.string(), industry: z.string().optional(), location: z.string().optional(), employees: z.number().optional(), phone: z.string().optional(), apollo_id: z.string().optional() })).max(200) },
   }, safe(async (a) => core.importCompanies(a.companies.map((c) => ({ ...c, apolloId: c.apollo_id })))));
+
+  const rowsSchema = z.array(z.record(z.string(), z.string())).max(100);
+  server.registerTool("import_call_sheet_rows", { description: "Import rows of the DFC call sheet, each an object keyed by the sheet's header text (Company, Name, Call Status, DFC Notes, ...). Safe to repeat: unchanged rows are skipped. Up to 100 rows per call.", inputSchema: { rows: rowsSchema } },
+    safe(async (a) => imports.importCallSheet(a.rows)));
+
+  server.registerTool("import_hiring_posts", { description: "Import rows of the LinkedIn hiring posts sheet, keyed by header text (Post ID, Post Date, Category, Poster Name, ...). Deduped on Post ID. Up to 100 rows per call.", inputSchema: { rows: rowsSchema } },
+    safe(async (a) => imports.importHiringPosts(a.rows)));
+
+  server.registerTool("add_job_alert_email", { description: "Hand over one LinkedIn job alert email (plain-text body) and the app extracts and stores the jobs in it. Deduped on LinkedIn job id.", inputSchema: { body: z.string(), subject: z.string().optional(), thread_id: z.string().optional(), received_at: z.string().optional() } },
+    safe(async (a) => imports.importJobAlerts(imports.parseJobAlertEmail(a.body, { subject: a.subject, threadId: a.thread_id, receivedAt: a.received_at }))));
+
+  server.registerTool("list_job_postings", { description: "Jobs collected from LinkedIn job alert emails.", annotations: read, inputSchema: { status: z.enum(["new", "kept", "dismissed"]).default("new"), hide_staffing: z.boolean().default(true) } },
+    safe(async (a) => (await imports.listJobPostings({ status: a.status, hideStaffing: a.hide_staffing })).map(({ job, company }) => ({ id: job.id, title: job.title, company: job.companyName, account: company?.id, location: job.location, url: job.url, received: job.receivedAt, likelyStaffing: job.likelyStaffing }))));
+
+  server.registerTool("mark_connected", { description: "Record that a LinkedIn connection request was accepted (for example after reading an acceptance email). Does not touch LinkedIn.", inputSchema: { person_id: z.number() } },
+    safe(async (a) => core.setConnectionStatus(a.person_id, "connected")));
+
+  server.registerTool("search_people", { description: "Find decision makers by name, title or company, optionally by LinkedIn connection status.", annotations: read, inputSchema: { search: z.string().optional(), connection: z.enum(["none", "queued", "note_ready", "sent", "connected"]).optional() } },
+    safe(async (a) => (await core.listPeople({ search: a.search, connection: a.connection, limit: 50 })).map(({ person: p, company }) => ({ id: p.id, name: p.name, title: p.title, company: company?.name, linkedin: p.linkedinUrl, connection: p.connectionStatus, note: p.connectionNote }))));
+
+  server.registerTool("list_routines", { description: "The routines this app knows how to run, with their schedules.", annotations: read },
+    safe(async () => listRoutines().map(({ id, name, schedule, summary }) => ({ id, name, schedule, summary }))));
+
+  server.registerTool("get_routine", { description: "The full instructions for one routine. Read this before working a job whose kind starts with 'routine:'.", annotations: read, inputSchema: { id: z.string() } },
+    safe(async (a) => getRoutine(a.id) ?? Promise.reject(new Error(`No routine named ${a.id}`))));
 
   server.registerTool("complete_job", { description: "Mark a queued job done (or failed) with a short result summary.", inputSchema: { job_id: z.number(), result: z.string(), failed: z.boolean().default(false) } },
     safe(async (a) => core.completeJob(a.job_id, a.result, a.failed)));

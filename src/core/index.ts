@@ -10,25 +10,68 @@ const DAY = 86_400_000;
 
 // ---------- Companies and people ----------
 
-export function normalizeDomain(input: string) {
-  return input.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0];
+export function normalizeDomain(input: string | null | undefined) {
+  const d = (input ?? "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split(/[/?#]/)[0];
+  return d.includes(".") ? d : null;
+}
+
+/** One canonical form for profile links, so the same person always matches: https://www.linkedin.com/in/slug */
+export function normalizeLinkedIn(input: string | null | undefined) {
+  const m = (input ?? "").trim().match(/linkedin\.com\/(in|pub)\/([^/?#\s]+)/i);
+  return m ? `https://www.linkedin.com/in/${decodeURIComponent(m[2]).toLowerCase()}` : null;
 }
 
 /** Add a company, or return the existing one when the domain is already known. */
-export async function upsertCompany(input: { name: string; domain: string; industry?: string; location?: string; employees?: number; icpTier?: "A" | "B" | "C"; icpScore?: number; hqPhone?: string; apolloId?: string }) {
+export type CompanyInput = Partial<typeof s.companies.$inferInsert> & { name: string };
+
+/**
+ * Add a company, or return the one we already have. Matches on domain; a company that
+ * arrives without a website matches on exact name. An existing record is never overwritten:
+ * only fields that are still blank are filled in.
+ */
+export async function upsertCompany(input: CompanyInput) {
   const db = await getDb();
-  const domain = normalizeDomain(input.domain);
-  const [existing] = await db.select().from(s.companies).where(eq(s.companies.domain, domain));
-  if (existing) return { company: existing, created: false };
-  const [company] = await db.insert(s.companies).values({ ...input, domain, website: `https://${domain}` }).returning();
+  const domain = normalizeDomain(input.domain ?? input.website);
+  const name = input.name.trim();
+  const [existing] = domain
+    ? await db.select().from(s.companies).where(eq(s.companies.domain, domain))
+    : await db.select().from(s.companies).where(sql`lower(${s.companies.name}) = ${name.toLowerCase()}`).limit(1);
+  if (existing) {
+    const fill = Object.fromEntries(Object.entries(input).filter(([k, v]) => v != null && v !== "" && (existing as Record<string, unknown>)[k] == null));
+    if (Object.keys(fill).length === 0) return { company: existing, created: false };
+    const [company] = await db.update(s.companies).set(fill).where(eq(s.companies.id, existing.id)).returning();
+    return { company, created: false };
+  }
+  const [company] = await db.insert(s.companies).values({ ...input, name, domain, website: input.website ?? (domain ? `https://${domain}` : null) }).returning();
   return { company, created: true };
+}
+
+export type PersonInput = Partial<typeof s.people.$inferInsert> & { name: string };
+
+/** Add a person, or return the one we already have (LinkedIn URL first, then Apollo id). Blank fields are filled; nothing is overwritten. */
+export async function upsertPerson(input: PersonInput) {
+  const db = await getDb();
+  const linkedinUrl = normalizeLinkedIn(input.linkedinUrl);
+  let existing = linkedinUrl ? (await db.select().from(s.people).where(eq(s.people.linkedinUrl, linkedinUrl)))[0] : undefined;
+  if (!existing && input.apolloId) existing = (await db.select().from(s.people).where(eq(s.people.apolloId, input.apolloId)).limit(1))[0];
+  if (!existing && !linkedinUrl && !input.apolloId && input.companyId) {
+    existing = (await db.select().from(s.people).where(and(eq(s.people.companyId, input.companyId), sql`lower(${s.people.name}) = ${input.name.trim().toLowerCase()}`)).limit(1))[0];
+  }
+  if (existing) {
+    const fill = Object.fromEntries(Object.entries({ ...input, linkedinUrl }).filter(([k, v]) => v != null && v !== "" && (existing as Record<string, unknown>)[k] == null));
+    if (Object.keys(fill).length === 0) return { person: existing, created: false };
+    const [person] = await db.update(s.people).set(fill).where(eq(s.people.id, existing.id)).returning();
+    return { person, created: false };
+  }
+  const [person] = await db.insert(s.people).values({ type: "decision_maker", ...input, name: input.name.trim(), linkedinUrl }).returning();
+  return { person, created: true };
 }
 
 export async function listCompanies(opts: { search?: string; tier?: string } = {}) {
   const db = await getDb();
   const rows = await db.select().from(s.companies).orderBy(desc(s.companies.icpScore));
   const q = opts.search?.toLowerCase();
-  return rows.filter((c) => (!q || c.name.toLowerCase().includes(q) || c.domain.includes(q)) && (!opts.tier || c.icpTier === opts.tier));
+  return rows.filter((c) => (!q || c.name.toLowerCase().includes(q) || (c.domain ?? "").includes(q)) && (!opts.tier || c.icpTier === opts.tier));
 }
 
 export async function getAccount(companyId: number) {
@@ -71,7 +114,7 @@ export async function addSignal(input: { type: s.SignalType; title: string; summ
     if (dupe) return { signal: dupe, created: false };
   }
   let companyId: number | undefined;
-  if (input.companyDomain) companyId = (await upsertCompany({ name: input.companyName ?? input.companyDomain, domain: input.companyDomain })).company.id;
+  if (input.companyDomain || input.companyName) companyId = (await upsertCompany({ name: input.companyName ?? input.companyDomain!, domain: input.companyDomain })).company.id;
   const [signal] = await db.insert(s.signals).values({
     type: input.type, title: input.title, summary: input.summary, roles: input.roles, category: input.category, companyId,
     source: input.source, sourceUrl: input.sourceUrl, externalId: input.externalId, signalDate: input.signalDate ? new Date(input.signalDate) : new Date(),
@@ -93,7 +136,7 @@ export async function addToCallList(companyId: number, opts: { topSignal?: strin
   const [company] = await db.select().from(s.companies).where(eq(s.companies.id, companyId));
   if (!company) throw new Error(`No company with id ${companyId}`);
   if (company.status === "do_not_contact") throw new Error(`${company.name} is marked do-not-contact`);
-  const [existing] = await db.select().from(s.callQueue).where(eq(s.callQueue.companyId, companyId));
+  const [existing] = await db.select().from(s.callQueue).where(eq(s.callQueue.companyId, companyId)).limit(1);
   if (existing) return { entry: existing, created: false };
   const [vendor] = await db.select().from(s.users).where(eq(s.users.role, "vendor"));
   const [entry] = await db.insert(s.callQueue).values({
@@ -102,11 +145,11 @@ export async function addToCallList(companyId: number, opts: { topSignal?: strin
   return { entry, created: true };
 }
 
-export async function listCallList(opts: { ownerId?: number } = {}) {
+export async function listCallList(opts: { ownerId?: number; status?: s.CallQueueStatus } = {}) {
   const db = await getDb();
   const rows = await db.select({ entry: s.callQueue, company: s.companies, person: s.people, owner: s.users }).from(s.callQueue)
     .innerJoin(s.companies, eq(s.callQueue.companyId, s.companies.id)).leftJoin(s.people, eq(s.callQueue.personId, s.people.id)).leftJoin(s.users, eq(s.callQueue.ownerId, s.users.id))
-    .where(opts.ownerId ? eq(s.callQueue.ownerId, opts.ownerId) : undefined)
+    .where(and(opts.ownerId ? eq(s.callQueue.ownerId, opts.ownerId) : undefined, opts.status ? eq(s.callQueue.status, opts.status) : undefined))
     .orderBy(sql`${s.callQueue.nextStepDate} asc nulls last`);
   // Gatekeeper and dead-number rates per company show which HQ lines to swap for a local office number.
   const stats = await db.select({
@@ -170,13 +213,34 @@ export async function saveConnectionNote(personId: number, note: string) {
   return person;
 }
 
-export async function setConnectionStatus(personId: number, status: s.ConnectionStatus) {
+export async function setConnectionStatus(personId: number, status: s.ConnectionStatus, at: Date = new Date()) {
   const db = await getDb();
-  const [person] = await db.update(s.people).set({ connectionStatus: status }).where(eq(s.people.id, personId)).returning();
+  const stamp = status === "sent" ? { connectionRequestedAt: at } : status === "connected" ? { connectedAt: at } : status === "none" ? { connectionRequestedAt: null, connectedAt: null } : {};
+  const [person] = await db.update(s.people).set({ connectionStatus: status, ...stamp }).where(eq(s.people.id, personId)).returning();
   if (person && (status === "sent" || status === "connected")) {
-    await db.insert(s.activities).values({ type: "linkedin", outcome: status === "sent" ? "request_sent" : "connected", personId, companyId: person.companyId });
+    await db.insert(s.activities).values({ type: "linkedin", outcome: status === "sent" ? "request_sent" : "connected", personId, companyId: person.companyId, occurredAt: at });
   }
   return person;
+}
+
+/** Ask Claude for a first LinkedIn message to someone you are connected with. The draft lands in Outreach drafts for review. */
+export async function queueMessageDraft(personId: number) {
+  const db = await getDb();
+  const [person] = await db.select().from(s.people).where(eq(s.people.id, personId));
+  if (!person) throw new Error(`No person with id ${personId}`);
+  return queueJob({ kind: "draft_linkedin_message", title: `Draft a LinkedIn message to ${person.name}`, payload: { personId } });
+}
+
+export async function listPeople(opts: { search?: string; connection?: s.ConnectionStatus; limit?: number } = {}) {
+  const db = await getDb();
+  const q = opts.search?.trim().toLowerCase();
+  const like = q ? `%${q}%` : null;
+  return db.select({ person: s.people, company: s.companies }).from(s.people).leftJoin(s.companies, eq(s.people.companyId, s.companies.id))
+    .where(and(
+      eq(s.people.type, "decision_maker"), opts.connection ? eq(s.people.connectionStatus, opts.connection) : undefined,
+      like ? sql`(lower(${s.people.name}) like ${like} or lower(coalesce(${s.people.title}, '')) like ${like} or lower(coalesce(${s.companies.name}, '')) like ${like})` : undefined,
+    ))
+    .orderBy(asc(s.people.name)).limit(opts.limit ?? 100);
 }
 
 // ---------- Claude job queue ----------
